@@ -1,5 +1,8 @@
 # CI Failure Diagnosis Agent
 
+## Upload summary
+
+This upload adds the CI diagnosis agent, the supporting build/evaluation outputs, and the report summarizing the results.
 
 ## Project objective
 

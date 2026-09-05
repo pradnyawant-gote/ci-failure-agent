@@ -1,5 +1,7 @@
 # Probability Decision Record — CI Diagnosis Agent
 
+This upload adds the CI diagnosis agent, evaluation builds, and the accompanying report for the documented decision trace.
+
 ## Purpose
 
 This record explains one complete decision made by the CI Diagnosis Agent. It answers the following audit questions:

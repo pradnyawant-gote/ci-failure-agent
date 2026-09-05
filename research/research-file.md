@@ -1,7 +1,6 @@
-# CI Diagnosis Agent 
+# CI Diagnosis Agent
 
-
-
+This upload adds the CI diagnosis agent, the build outputs, and the included report for the project.
 
 ## 1. Problem statement
 
