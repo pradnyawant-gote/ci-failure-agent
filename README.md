@@ -161,14 +161,3 @@ The notebook calls the first metric “Accuracy.” It counts correct automatic 
 In this saved run, EIG per cost produces **22 correct automatic reports**, compared with **21** for cost-only, while using fewer actions. Both policies make three incorrect reports, and both have **0% recall for Code**. That failure pattern is a useful direction for improving the evidence model.
 
 This small, balanced simulation is an exploratory comparison. The 90% reporting threshold has not been calibrated against real CI investigations, and these results do not establish production performance.
-
-
-## Useful next steps
-
-- Restore a complete evaluation that runs from a fresh kernel.
-- Improve evidence that distinguishes code defects from test-related failures.
-- Estimate outcome likelihoods and action costs from real investigations.
-- Test confidence calibration, repeated simulation seeds, and performance on unseen repositories.
-- Connect diagnostic actions to CI logs and tools, then evaluate the full workflow.
-
-If you are exploring Bayesian reasoning, CI reliability, or agents that choose what to investigate next, there is plenty here to experiment with. Practical feedback is especially welcome on which checks help engineers most, how much they cost, and when human review is the right next step.
