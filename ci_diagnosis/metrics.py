@@ -21,13 +21,19 @@ def scored_record(result, truth, *, wrong_loss=None, review_cost=DEFAULT_REVIEW_
     for state, loss in losses.items():
         finite_number(loss, state + " loss", minimum=0)
     finite_number(review_cost, "review cost", minimum=0)
-    from .records import plain
+    from .records import plain, fingerprint
     record = plain(result)
     correct = record["decision"] == "REPORT" and record["prediction"] == truth
     terminal_loss = 0.0 if correct else losses[truth] if record["decision"] == "REPORT" else review_cost
     record.update({"true_state": truth, "correct": correct, "terminal_loss": terminal_loss,
                    "total_decision_cost": record["diagnostic_cost"] + terminal_loss})
+    record["record_hash"] = fingerprint(record)
     return record
+
+
+def verify_record_hash(record):
+    from .records import fingerprint
+    return record.get("record_hash") == fingerprint({k: v for k, v in record.items() if k != "record_hash"})
 
 
 def calculate_metrics(records, *, bins=10):
@@ -44,6 +50,8 @@ def calculate_metrics(records, *, bins=10):
     brier, log_losses = [], []
     top_correct, top_confidence = [], []
     for r in records:
+        if "record_hash" in r and not verify_record_hash(r):
+            raise ValidationError("diagnostic record checksum mismatch")
         truth = r.get("true_state")
         if truth not in STATES or r.get("decision") not in {"REPORT", "ESCALATE"}:
             raise ValidationError("invalid scored terminal record")
@@ -54,6 +62,8 @@ def calculate_metrics(records, *, bins=10):
         b = validate_vector(r["final_belief"], STATES, normalized=True)
         finite_number(r["diagnostic_cost"], "diagnostic cost", minimum=0)
         finite_number(r["total_decision_cost"], "total decision cost", minimum=0)
+        if r.get("correct") != (r["decision"] == "REPORT" and r.get("prediction") == truth):
+            raise ValidationError("record correctness disagrees with terminal decision")
         confusion[truth][r["prediction"] if r["decision"] == "REPORT" else "ESCALATE"] += 1
         brier.append(math.fsum((b[s] - int(s == truth)) ** 2 for s in STATES))
         log_losses.append(-math.log(b[truth]) if b[truth] > 0 else math.inf)
@@ -78,6 +88,16 @@ def calculate_metrics(records, *, bins=10):
     # classes; individual undefined precision remains explicitly None.
     ece = sum(abs(b["correct_sum"] - b["confidence_sum"]) for b in reliability) / n if n else None
     supported_recalls = [v for v in recall.values() if v is not None]
+    attempts=[a for r in records for a in r["actions_taken"]]
+    failed=sum(a["status"] != "signal" for a in attempts)
+    classwise_brier={s:mean([(r["final_belief"][s]-int(r["true_state"]==s))**2 for r in records]) for s in STATES}
+    classwise_ece={}
+    for state in STATES:
+        buckets=[[] for _ in range(bins)]
+        for r in records:
+            p=r["final_belief"][state]
+            buckets[min(bins-1,int(p*bins))].append((p,int(r["true_state"]==state)))
+        classwise_ece[state]=sum(abs(sum(correct-p for p,correct in bucket)) for bucket in buckets)/n if n else None
     return {"count": n, "reports": reports, "correct_reports": correct, "wrong_reports": reports-correct,
             "coverage": reports / n if n else None, "referral_rate": (n-reports) / n if n else None,
             "correct_auto_rate": correct / n if n else None,
@@ -88,7 +108,13 @@ def calculate_metrics(records, *, bins=10):
             "precision": precision, "recall": recall, "support": support, "confusion": confusion,
             "brier": mean(brier), "log_loss": mean(log_losses), "zero_true_probability_cases": sum(math.isinf(x) for x in log_losses),
             "ece": ece, "reliability_bins": reliability,
+            "classwise_brier": classwise_brier, "classwise_ece": classwise_ece,
             "average_actions": mean([len(r["actions_taken"]) for r in records]),
+            "average_attempts": mean([len(r["actions_taken"]) for r in records]),
+            "average_unique_actions": mean([len({a["action_id"] for a in r["actions_taken"]}) for r in records]),
+            "failed_attempt_rate": failed/len(attempts) if attempts else None,
+            "attempt_status_counts": dict(Counter(a["status"] for a in attempts)),
+            "duplicate_evidence_suppressions": sum(a["reason"] in {"duplicate_event","duplicate_evidence"} for a in attempts),
             "average_diagnostic_cost": mean(effort), "median_diagnostic_cost":
             (effort[(n-1)//2] + effort[n//2]) / 2 if n else None,
             "p95_diagnostic_cost": effort[min(n-1, math.ceil(0.95*n)-1)] if n else None,
@@ -105,6 +131,7 @@ def risk_coverage(records, thresholds=(0.5, 0.7, 0.8, 0.9, 0.95, 0.99)):
     """Descriptive re-thresholding of final beliefs, not a rerun of action policies."""
     points = []
     for threshold in thresholds:
+        finite_number(threshold, "threshold", minimum=0, maximum=1)
         selected = [r for r in records if max(r["final_belief"].values()) >= threshold]
         correct = sum(max(STATES, key=lambda s: r["final_belief"][s]) == r["true_state"] for r in selected)
         points.append({"threshold": threshold, "accepted": len(selected),
@@ -114,6 +141,8 @@ def risk_coverage(records, thresholds=(0.5, 0.7, 0.8, 0.9, 0.95, 0.99)):
 
 
 def paired_difference(left, right, *, field="total_decision_cost", seed=42, repetitions=500, clusters=None):
+    if type(repetitions) is not int or repetitions < 2:
+        raise ValidationError("bootstrap needs at least two repetitions")
     a = {r["case_id"]: r for r in left}
     b = {r["case_id"]: r for r in right}
     if len(a) != len(left) or len(b) != len(right) or set(a) != set(b):

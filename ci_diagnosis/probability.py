@@ -37,13 +37,17 @@ def normalize(weights):
     if not isinstance(weights, Mapping) or not weights:
         raise ValidationError("weights must be a nonempty mapping")
     clean = {s: finite_number(w, s, minimum=0) for s, w in weights.items()}
-    total = math.fsum(clean.values())
-    if not math.isfinite(total) or total <= 0:
+    high = max(clean.values())
+    if high <= 0:
         raise ImpossibleEvidence("zero or invalid normalization mass")
-    return {s: w / total for s, w in clean.items()}
+    scaled = {s:w/high for s,w in clean.items()}
+    total = math.fsum(scaled.values())
+    return {s:w/total for s,w in scaled.items()}
 
 
 def log_evidence(belief, likelihood):
+    if not isinstance(belief, Mapping):
+        raise ValidationError("belief must be a mapping")
     states = tuple(belief)
     b = validate_vector(belief, states, normalized=True)
     likelihood = validate_vector(likelihood, states)
@@ -66,6 +70,8 @@ def update_belief(belief, likelihood):
 
 
 def entropy(belief):
+    if not isinstance(belief, Mapping):
+        raise ValidationError("belief must be a mapping")
     b = validate_vector(belief, tuple(belief), normalized=True)
     return -math.fsum(p * math.log2(p) for p in b.values() if p > 0)
 
@@ -81,6 +87,8 @@ def validate_outcome_model(outcomes, states):
 
 
 def expected_information_gain(belief, outcomes):
+    if not isinstance(belief, Mapping):
+        raise ValidationError("belief must be a mapping")
     states = tuple(belief)
     validate_vector(belief, states, normalized=True)
     outcomes = validate_outcome_model(outcomes, states)

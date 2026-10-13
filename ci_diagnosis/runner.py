@@ -49,7 +49,12 @@ def diagnose(case, model, provider, policy="eig_per_cost", limits=None, *, clock
     limits = limits or Limits()
     if limits.allowed_actions is not None and not limits.allowed_actions.issubset({a.action_id for a in model.actions}):
         raise ValidationError("unknown permitted action ID")
-    belief = model.initial_belief(case.stage)
+    initial_mismatch = False
+    try:
+        belief = model.initial_belief(case.stage)
+    except ImpossibleEvidence:
+        belief = dict(model.priors)
+        initial_mismatch = True
     records, candidates, used, events, evidence = [], [], set(), set(), set()
     attempts = {}
     spent = 0.0
@@ -64,6 +69,8 @@ def diagnose(case, model, provider, policy="eig_per_cost", limits=None, *, clock
 
     if not case.supported_scope:
         return finish("ESCALATE", "unsupported_scope")
+    if initial_mismatch:
+        return finish("ESCALATE", "stage_model_mismatch_zero_support")
     if policy in BASELINES:
         # Forced baselines deliberately bypass the confidence gate. They are
         # evaluation comparators, not recommendations for automatic deployment.
@@ -87,6 +94,13 @@ def diagnose(case, model, provider, policy="eig_per_cost", limits=None, *, clock
             return finish("ESCALATE", "attempt_limit")
         feasible, rejected = [], {}
         for action in model.actions:
+            try:
+                available = provider.available(action.action_id)
+                if type(available) is not bool:
+                    raise ValidationError("availability must be boolean")
+            except Exception:
+                rejected[action.action_id] = "provider_availability_error"
+                continue
             if action.action_id in used:
                 reason = "completed_or_retired"
             elif "all" not in action.tags and case.stage not in action.tags:
@@ -95,7 +109,7 @@ def diagnose(case, model, provider, policy="eig_per_cost", limits=None, *, clock
                 reason = "permission_unavailable"
             elif action.cost > limits.budget - spent + 1e-10:
                 reason = "unaffordable"
-            elif not provider.available(action.action_id):
+            elif not available:
                 reason = "provider_unavailable"
             else:
                 feasible.append(action)
@@ -127,6 +141,10 @@ def diagnose(case, model, provider, policy="eig_per_cost", limits=None, *, clock
                               "tool_error", detail=f"{type(exc).__name__}: {exc}")
             cost = action.cost
             terminal_reason = "invalid_observation_or_provider_error"
+        if clock() - started >= limits.max_seconds or elapsed_observed + obs.elapsed_seconds >= limits.max_seconds:
+            obs = Observation(action.action_id, obs.event_id, "timeout", evidence_id=obs.evidence_id,
+                              cost=cost, elapsed_seconds=obs.elapsed_seconds,
+                              detail="provider result arrived after the episode deadline")
         spent += cost
         elapsed_observed += obs.elapsed_seconds
         if obs.event_id in events:

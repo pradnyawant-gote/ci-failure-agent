@@ -64,6 +64,8 @@ class OutcomeBank:
             checked[case_id] = causes
         self._truths = MappingProxyType(checked)
         self._actions = MappingProxyType({a.action_id: a for a in model.actions})
+        if any(set(a.outcomes) != {"signal","no_signal"} for a in model.actions):
+            raise ValidationError("synthetic bank supports binary actions only; use a replay provider for richer models")
         self.seed = seed
         self.scenario = scenario or Scenario()
         self._unavailable = frozenset(unavailable)

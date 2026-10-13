@@ -40,7 +40,7 @@ class Action:
     permission: str = "read_only"
 
     def __post_init__(self):
-        if not self.action_id or not self.name:
+        if not isinstance(self.action_id,str) or not self.action_id or not isinstance(self.name,str) or not self.name:
             raise ValidationError("action requires stable ID and display name")
         if finite_number(self.cost, "action cost", minimum=0) <= 0:
             raise ValidationError("action cost must be strictly positive")
@@ -49,6 +49,8 @@ class Action:
         if self.permission != "read_only":
             raise ValidationError("this simulation supports read-only actions only")
         validate_outcome_model(self.outcomes, STATES)
+        if not isinstance(self.labels,Mapping) or not isinstance(self.aliases,Mapping):
+            raise ValidationError("outcome labels and aliases must be mappings")
         if set(self.labels) != set(self.outcomes) or any(v not in self.outcomes for v in self.aliases.values()):
             raise ValidationError("outcome labels/aliases must match canonical IDs")
         for field in ("outcomes", "labels", "aliases"):
@@ -72,8 +74,10 @@ class Model:
     provenance: Mapping
 
     def __post_init__(self):
-        if not self.version:
+        if not isinstance(self.version,str) or not self.version:
             raise ValidationError("model version is required")
+        if not isinstance(self.provenance,Mapping) or any(not isinstance(a,Action) for a in self.actions):
+            raise ValidationError("model requires action instances and provenance mapping")
         validate_vector(self.priors, STATES, normalized=True)
         if set(self.stage_likelihoods) != set(STAGES):
             raise ValidationError("stage vocabulary must exactly match model")

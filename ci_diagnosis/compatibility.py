@@ -9,6 +9,7 @@ Run All now works. Notebook-style functions accept legacy display aliases.
 import contextlib
 import io
 import os
+from dataclasses import replace
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -65,7 +66,18 @@ def install_definitions(namespace, model=None):
     def rank(b, candidates, outcome_models):
         if any(a["name"] not in by_name or a["name"] not in outcome_models for a in candidates):
             raise ValidationError("unsupported action/model; compatibility cannot execute unknown checks")
-        ranked = modern_rank(b, [by_name[a["name"]] for a in candidates])
+        checked=[]
+        for item in candidates:
+            action=by_name[item["name"]]
+            supplied=outcome_models[item["name"]]
+            canonical={}
+            for label, vector in supplied.items():
+                key=action.canonical_outcome(label)
+                if key in canonical and canonical[key] != vector:
+                    raise ValidationError("conflicting likelihoods for an outcome alias")
+                canonical[key]=vector
+            checked.append(replace(action,cost=item["cost"],outcomes=canonical))
+        ranked = modern_rank(b, checked)
         return ranked, []
 
     def decision(b, candidates, outcome_models):
