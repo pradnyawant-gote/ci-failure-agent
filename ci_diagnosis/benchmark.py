@@ -16,6 +16,7 @@ from typing import Any
 from .data import grouped_split, load_workbook
 from .evaluation import DEFAULT_WORKBOOK, cohort_run
 from .model import fit_stage_model
+from .probability import ValidationError
 from .simulation import Scenario
 
 BENCHMARK_POLICIES = ("eig_per_cost", "lowest_cost", "fixed_test", "stage_map", "prior_map")
@@ -24,6 +25,8 @@ BASELINE_PEAK_BYTES = 3550898
 
 
 def benchmark_workload(repetitions: int = 2) -> dict[str, Any]:
+    if type(repetitions) is not int or not 1 <= repetitions <= 10:
+        raise ValidationError("benchmark requires 1..10 repetitions")
     rows, _ = load_workbook(DEFAULT_WORKBOOK)
     train, _, test = grouped_split(rows)
     model = fit_stage_model(train)

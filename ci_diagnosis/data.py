@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import math
 import re
 from dataclasses import dataclass
@@ -81,10 +82,15 @@ def load_workbook(path: str | Path) -> tuple[list[SourceRow], dict[str, Any]]:
     path = Path(path)
     if not path.is_file():
         raise ValidationError(f"workbook not found: {path}")
-    if path.stat().st_size > 32 * 1024 * 1024:
+    try:
+        with path.open("rb") as source:
+            content = source.read(32 * 1024 * 1024 + 1)
+    except OSError as exc:
+        raise ValidationError("cannot read workbook bytes") from exc
+    if len(content) > 32 * 1024 * 1024:
         raise ValidationError("workbook exceeds intake size limit")
     try:
-        with ZipFile(path) as archive:
+        with ZipFile(io.BytesIO(content)) as archive:
             if sum(item.file_size for item in archive.infolist()) > 128 * 1024 * 1024:
                 raise ValidationError("workbook expanded contents exceed size limit")
     except (BadZipFile, OSError) as exc:
@@ -92,10 +98,11 @@ def load_workbook(path: str | Path) -> tuple[list[SourceRow], dict[str, Any]]:
     try:
         import pandas as pd
 
-        df = pd.read_excel(path, engine="openpyxl")
+        df = pd.read_excel(io.BytesIO(content), engine="openpyxl")
     except ImportError as exc:
         raise ValidationError("workbook evaluation requires pandas and openpyxl") from exc
-    except (ValueError, OSError, KeyError) as exc:
+    except Exception as exc:
+        # Third-party parser failures are explicit intake errors, never evidence.
         raise ValidationError("cannot read workbook") from exc
     needed = {"job_id", "project_name", "sub-category", "step"}
     if not needed.issubset(df.columns):
@@ -117,7 +124,7 @@ def load_workbook(path: str | Path) -> tuple[list[SourceRow], dict[str, Any]]:
         raise ValidationError("mapped workbook must contain all four states")
     return rows, {
         "path": str(path.resolve()),
-        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "sha256": hashlib.sha256(content).hexdigest(),
         "source_count": len(df),
         "mapped_count": len(rows),
         "excluded_count": len(excluded),

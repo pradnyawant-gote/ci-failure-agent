@@ -1,8 +1,12 @@
 """Real temporary-file tests of atomic publication and data-only reading."""
 
+import unittest
 from pathlib import Path
 
-import pytest
+try:
+    import pytest
+except ModuleNotFoundError as exc:
+    raise unittest.SkipTest("pytest is required for persistence fixtures") from exc
 
 from ci_diagnosis.artifacts import ArtifactLimits, read_python_artifact, write_python_artifact
 from ci_diagnosis.probability import ValidationError

@@ -24,6 +24,8 @@ def safe_detail(text: str) -> str:
 
 def emit(event: str, **fields: object) -> None:
     """Call sites supply only IDs/hashes, dispositions and numeric resource facts."""
+    if not LOGGER.isEnabledFor(logging.INFO):
+        return
     clean = {key: safe_detail(value) if isinstance(value, str) else value for key, value in fields.items()}
     LOGGER.info(event, extra={"diagnostic_event": {"event": event, **clean}})
 

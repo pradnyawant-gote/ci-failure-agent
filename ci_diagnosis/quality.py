@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib.metadata
+import os
 import platform
 import subprocess
 import sys
@@ -43,7 +44,10 @@ def environment_status() -> dict[str, Any]:
         and (2, 2) <= tuple(int(x) for x in pandas_version.split(".")[:2]) < (3, 1)
         and (3, 1) <= tuple(int(x) for x in openpyxl_version.split(".")[:2]) < (3, 2)
     )
-    notebook_preserved = hashlib.sha256(DEFAULT_NOTEBOOK.read_bytes()).hexdigest() == NOTEBOOK_SHA256
+    try:
+        notebook_preserved = hashlib.sha256(DEFAULT_NOTEBOOK.read_bytes()).hexdigest() == NOTEBOOK_SHA256
+    except OSError:
+        notebook_preserved = False
     return {
         "python": platform.python_version(),
         "platform": platform.platform(),
@@ -59,9 +63,19 @@ def environment_status() -> dict[str, Any]:
 
 def run_gate(name: str, arguments: list[str], timeout: float = 180.0) -> dict[str, Any]:
     command = [sys.executable, "-B", "-m", *arguments]
+    env = dict(os.environ)
+    env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     try:
         result = subprocess.run(
-            command, cwd=ROOT, capture_output=True, text=True, encoding="utf-8", timeout=timeout, check=False
+            command,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=timeout,
+            check=False,
+            env=env,
         )
     except subprocess.TimeoutExpired:
         return {"gate": name, "command": command, "passed": False, "reason": "timeout"}

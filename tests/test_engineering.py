@@ -1,5 +1,6 @@
 """New regressions for the engineering audit, using independent failure probes."""
 
+import importlib.util
 import io
 import logging
 import subprocess
@@ -218,6 +219,10 @@ class IsolatedNotebookTests(unittest.TestCase):
             with self.assertRaisesRegex(ValidationError, "terminated"):
                 execute_worker(DEFAULT_NOTEBOOK, "unit")
 
+    @unittest.skipUnless(
+        importlib.util.find_spec("pandas") and importlib.util.find_spec("openpyxl"),
+        "workbook dependencies required",
+    )
     def test_parent_cwd_and_stdout_unchanged(self):
         from ci_diagnosis.compatibility import execute_notebook_compatibility
 

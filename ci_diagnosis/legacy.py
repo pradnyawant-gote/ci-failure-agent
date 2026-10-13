@@ -27,8 +27,17 @@ DEFAULT_NOTEBOOK = Path(__file__).resolve().parents[1] / "experiments" / "agent_
 
 def read_notebook(path: str | Path = DEFAULT_NOTEBOOK) -> tuple[dict[str, Any], str]:
     path = Path(path)
-    data = path.read_bytes()
-    return json.loads(data.decode("utf-8")), hashlib.sha256(data).hexdigest()
+    try:
+        with path.open("rb") as source:
+            data = source.read(16 * 1024 * 1024 + 1)
+        if len(data) > 16 * 1024 * 1024:
+            raise ValidationError("notebook exceeds inspection size limit")
+        result = json.loads(data.decode("utf-8"))
+    except (OSError, ValueError, UnicodeError) as exc:
+        raise ValidationError("cannot inspect notebook") from exc
+    if not isinstance(result, dict) or not isinstance(result.get("cells"), list):
+        raise ValidationError("invalid notebook structure")
+    return result, hashlib.sha256(data).hexdigest()
 
 
 def literal_parameters(path: str | Path = DEFAULT_NOTEBOOK) -> dict[str, Any]:
