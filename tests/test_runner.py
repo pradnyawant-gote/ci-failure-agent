@@ -1,11 +1,11 @@
 import unittest
 from dataclasses import replace
 
-from ci_diagnosis.model import default_model, STATES
-from ci_diagnosis.records import PublicCase, Observation, plain
-from ci_diagnosis.runner import diagnose, Limits
-from ci_diagnosis.simulation import SequenceProvider, OutcomeBank
+from ci_diagnosis.model import STATES, default_model
 from ci_diagnosis.probability import ValidationError
+from ci_diagnosis.records import Observation, PublicCase
+from ci_diagnosis.runner import Limits, diagnose
+from ci_diagnosis.simulation import OutcomeBank, SequenceProvider
 from tests.helpers import two_state_model
 
 
@@ -16,19 +16,21 @@ class RunnerTests(unittest.TestCase):
 
     def run_case(self, items, *, limits=None, model=None, policy="eig_per_cost"):
         model = model or self.model
-        return diagnose(self.case, model, SequenceProvider(items, [a.action_id for a in model.actions]), policy, limits)
+        return diagnose(
+            self.case, model, SequenceProvider(items, [a.action_id for a in model.actions]), policy, limits
+        )
 
     def test_report_after_final_step(self):
         result = self.run_case([("a0", "signal"), ("a1", "signal")], limits=Limits(max_steps=2, budget=2))
         self.assertEqual(result.decision, "REPORT")
         self.assertEqual(result.prediction, "Code")
-        self.assertAlmostEqual(result.final_belief["Code"], 16/17)
+        self.assertAlmostEqual(result.final_belief["Code"], 16 / 17)
         self.assertEqual(len(result.actions_taken), 2)
 
     def test_mixed_signals_keep_uncertainty(self):
         result = self.run_case([("a0", "signal"), ("a1", "no_signal")])
         self.assertEqual(result.decision, "ESCALATE")
-        self.assertAlmostEqual(result.final_belief["Code"], .5)
+        self.assertAlmostEqual(result.final_belief["Code"], 0.5)
 
     def test_empty_evidence_returns_explicit_referral(self):
         result = self.run_case([])
@@ -45,7 +47,7 @@ class RunnerTests(unittest.TestCase):
                 self.assertFalse(result.actions_taken[0].applied)
 
     def test_step_budget_attempt_limits(self):
-        for limits in (Limits(max_steps=0), Limits(budget=0), Limits(budget=.99), Limits(max_attempts=0)):
+        for limits in (Limits(max_steps=0), Limits(budget=0), Limits(budget=0.99), Limits(max_attempts=0)):
             with self.subTest(limits=limits):
                 result = self.run_case([("a0", "signal")], limits=limits)
                 self.assertEqual(result.decision, "ESCALATE")
@@ -61,50 +63,59 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual([r.attempt for r in result.actions_taken], [0, 1])
 
     def test_duplicate_evidence_is_not_double_counted(self):
-        items = [Observation("a0", "event1", "signal", "signal", "same-artifact"),
-                 Observation("a1", "event2", "signal", "signal", "same-artifact")]
+        items = [
+            Observation("a0", "event1", "signal", "signal", "same-artifact"),
+            Observation("a1", "event2", "signal", "signal", "same-artifact"),
+        ]
         result = self.run_case(items)
-        self.assertAlmostEqual(result.final_belief["Code"], .8)
+        self.assertAlmostEqual(result.final_belief["Code"], 0.8)
         self.assertEqual(result.actions_taken[1].reason, "duplicate_evidence")
         self.assertEqual(result.diagnostic_cost, 2)
 
     def test_duplicate_event_is_not_double_counted(self):
-        result = self.run_case([Observation("a0", "same", "signal", "signal"),
-                                Observation("a1", "same", "signal", "signal")])
-        self.assertAlmostEqual(result.final_belief["Code"], .8)
+        result = self.run_case(
+            [Observation("a0", "same", "signal", "signal"), Observation("a1", "same", "signal", "signal")]
+        )
+        self.assertAlmostEqual(result.final_belief["Code"], 0.8)
         self.assertEqual(result.actions_taken[1].reason, "duplicate_event")
 
     def test_outcome_pairing_validation(self):
-        for item in (Observation("wrong", "e", "signal", "signal"),
-                     Observation("a0", "e", "signal", "unknown"),
-                     Observation("a0", "e", "tool_error", "no_signal")):
+        for item in (
+            Observation("wrong", "e", "signal", "signal"),
+            Observation("a0", "e", "signal", "unknown"),
+            Observation("a0", "e", "tool_error", "no_signal"),
+        ):
             with self.subTest(item=item):
                 result = self.run_case([item])
                 self.assertEqual(result.reason, "invalid_observation_or_provider_error")
                 self.assertEqual(result.final_belief, dict(self.model.priors))
 
     def test_overrun_is_visible_and_stops_without_claiming_budget_compliance(self):
-        result=self.run_case([Observation("a0","overrun","signal","signal",cost=100)])
-        self.assertEqual(result.reason,"provider_cost_overrun")
-        self.assertEqual(result.diagnostic_cost,100)
+        result = self.run_case([Observation("a0", "overrun", "signal", "signal", cost=100)])
+        self.assertEqual(result.reason, "provider_cost_overrun")
+        self.assertEqual(result.diagnostic_cost, 100)
         self.assertTrue(result.budget_breached)
-        self.assertEqual(result.final_belief,dict(self.model.priors))
-        self.assertEqual(result.actions_taken[0].reported_cost,100)
+        self.assertEqual(result.final_belief, dict(self.model.priors))
+        self.assertEqual(result.actions_taken[0].reported_cost, 100)
 
     def test_zero_support_observation_refers(self):
         model = two_state_model(1)
-        action = replace(model.actions[0], outcomes={
-            "signal": dict(zip(STATES, (.8,.2,.25,.25))),
-            "no_signal": dict(zip(STATES, (.2,.8,.25,.25))),
-            "impossible": dict(zip(STATES, (0.,0.,.5,.5)))},
-            labels={"signal":"Positive","no_signal":"Negative","impossible":"Impossible"})
+        action = replace(
+            model.actions[0],
+            outcomes={
+                "signal": dict(zip(STATES, (0.8, 0.2, 0.25, 0.25), strict=False)),
+                "no_signal": dict(zip(STATES, (0.2, 0.8, 0.25, 0.25), strict=False)),
+                "impossible": dict(zip(STATES, (0.0, 0.0, 0.5, 0.5), strict=False)),
+            },
+            labels={"signal": "Positive", "no_signal": "Negative", "impossible": "Impossible"},
+        )
         model = replace(model, actions=(action,))
         result = self.run_case([("a0", "impossible")], model=model)
         self.assertEqual(result.reason, "model_mismatch_zero_support")
         self.assertEqual(result.final_belief, dict(model.priors))
 
     def test_no_information_refers(self):
-        model = two_state_model(2, positive=(.5,.5,.5,.5))
+        model = two_state_model(2, positive=(0.5, 0.5, 0.5, 0.5))
         self.assertEqual(self.run_case([], model=model).reason, "no_informative_actions")
 
     def test_unavailable_tools_and_permissions(self):
@@ -118,9 +129,12 @@ class RunnerTests(unittest.TestCase):
         class Broken:
             def available(self, action_id):
                 raise RuntimeError("tool registry offline")
+
         result = diagnose(self.case, self.model, Broken())
         self.assertEqual(result.decision, "ESCALATE")
-        self.assertTrue(all(v == "provider_availability_error" for v in result.candidate_trace[-1]["rejected"].values()))
+        self.assertTrue(
+            all(v == "provider_availability_error" for v in result.candidate_trace[-1]["rejected"].values())
+        )
 
     def test_late_signal_is_timeout_and_not_evidence(self):
         result = self.run_case([Observation("a0", "e", "signal", "signal", elapsed_seconds=31)])
@@ -132,37 +146,51 @@ class RunnerTests(unittest.TestCase):
         bank = OutcomeBank(self.model, {"case": "Code"})
         result = diagnose(replace(self.case, supported_scope=False), self.model, bank)
         self.assertEqual(result.reason, "unsupported_scope")
-        result = self.run_case([("a0","signal"),("a1","signal")], limits=Limits(allow_uncalibrated=False))
+        result = self.run_case([("a0", "signal"), ("a1", "signal")], limits=Limits(allow_uncalibrated=False))
         self.assertEqual(result.reason, "empirical_calibration_unavailable")
 
     def test_threshold_boundary(self):
-        for threshold, expected in ((.8,"REPORT"),(.800001,"ESCALATE")):
-            result = self.run_case([("a0","signal")], model=two_state_model(1), limits=Limits(confidence_threshold=threshold))
+        for threshold, expected in ((0.8, "REPORT"), (0.800001, "ESCALATE")):
+            result = self.run_case(
+                [("a0", "signal")], model=two_state_model(1), limits=Limits(confidence_threshold=threshold)
+            )
             self.assertEqual(result.decision, expected)
 
     def test_known_last_observation_regression(self):
         model = default_model()
-        result = diagnose(PublicCase("regression","Build"), model,
-            SequenceProvider([("recent_changes","no_signal"),("dependency_changes","signal")],
-                             [a.action_id for a in model.actions]))
+        result = diagnose(
+            PublicCase("regression", "Build"),
+            model,
+            SequenceProvider(
+                [("recent_changes", "no_signal"), ("dependency_changes", "signal")],
+                [a.action_id for a in model.actions],
+            ),
+        )
         self.assertEqual(result.decision, "REPORT")
         self.assertEqual(result.prediction, "Dependency")
-        self.assertGreater(result.confidence,.99)
+        self.assertGreater(result.confidence, 0.99)
 
     def test_invalid_limits(self):
-        for kwargs in ({"budget":-1},{"max_steps":-1},{"max_retries":True},{"confidence_threshold":1.1},
-                       {"max_seconds":float("nan")},{"max_attempts":1.5}):
+        for kwargs in (
+            {"budget": -1},
+            {"max_steps": -1},
+            {"max_retries": True},
+            {"confidence_threshold": 1.1},
+            {"max_seconds": float("nan")},
+            {"max_attempts": 1.5},
+        ):
             with self.subTest(kwargs=kwargs), self.assertRaises(ValidationError):
                 Limits(**kwargs)
 
     def test_impossible_initial_stage_refers_without_fabricated_belief(self):
-        stages={z:dict.fromkeys(STATES,0.0 if z=="Build" else 1/6) for z in self.model.stage_likelihoods}
-        model=replace(self.model,stage_likelihoods=stages)
-        result=self.run_case([],model=model)
-        self.assertEqual(result.reason,"stage_model_mismatch_zero_support")
-        self.assertEqual(result.final_belief,dict(model.priors))
+        stages = {
+            z: dict.fromkeys(STATES, 0.0 if z == "Build" else 1 / 6) for z in self.model.stage_likelihoods
+        }
+        model = replace(self.model, stage_likelihoods=stages)
+        result = self.run_case([], model=model)
+        self.assertEqual(result.reason, "stage_model_mismatch_zero_support")
+        self.assertEqual(result.final_belief, dict(model.priors))
 
     def test_truth_fields_not_allowed_in_public_case(self):
         with self.assertRaises(TypeError):
-            PublicCase("case","Build", true_state="Code")
-
+            PublicCase("case", "Build", true_state="Code")

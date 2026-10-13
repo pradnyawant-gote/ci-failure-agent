@@ -24,9 +24,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
-    sys.path.insert(0,str(ROOT))
+    sys.path.insert(0, str(ROOT))
 
-ORIGINAL_ARCHITECTURE = r'''flowchart TD
+ORIGINAL_ARCHITECTURE = r"""flowchart TD
     A["Original notebook: sequential cell execution"] --> B["Four states, priors,<br/>seven-stage likelihoods; threshold 0.90"]
     B --> C["Ten actions: tags, relative costs,<br/>binary display labels"]
     C --> D["Bayes/entropy/EIG and cost policies"]
@@ -70,9 +70,9 @@ ORIGINAL_ARCHITECTURE = r'''flowchart TD
     class AG,AH assumed;
     class X,Y,M,Z,AE,AF broken;
     class AI docs;
-'''
+"""
 
-IMPLEMENTED_ARCHITECTURE = r'''flowchart TD
+IMPLEMENTED_ARCHITECTURE = r"""flowchart TD
     A["parameters.py: original literal assumptions"] --> B["model.py: explicit ratio-preserving normalization;<br/>immutable validated priors/stages/actions;<br/>canonical IDs, labels and aliases"]
     B --> C{"Valid distributions, costs and registry?"}
     C -->|no| D["ValidationError; no diagnosis"]
@@ -117,21 +117,81 @@ IMPLEMENTED_ARCHITECTURE = r'''flowchart TD
     AJ["tests/*.py: independent arithmetic,<br/>failure/resource/provenance/reproducibility checks"] -.-> B
     AJ -.-> W
     AJ -.-> AI
-'''
+"""
 
 AUDIT_FINDINGS = (
-    ("B01", "notebook cells 13/15", "Undefined results and simulator", "New Python evaluator/provider; original failures preserved as baseline"),
-    ("B02", "cell 13; calculate_posterior", "Printing overwrites stage model", "Immutable model and closure-based compatibility definitions"),
-    ("B03", "cells 5/7 action/outcome tables", "Nine catalogue/model outcome mismatches", "Canonical IDs plus validated legacy aliases"),
-    ("B04", "run_diagnosis", "No stop check after final observation", "One bounded runner returns structured terminal decisions"),
-    ("B05", "prior/stage/outcome tables", "Rounding yields non-unit distributions", "Versioned ratio-preserving normalization and provenance"),
-    ("B06/B07", "calculate_eig/update_posterior/should_stop", "Zero division, invalid beliefs and NaNs", "Explicit zero-support handling, log updates and schema validation"),
-    ("B08/B09", "rank_actions fallback/cost", "Unexecutable fallback and invalid costs", "Validated complete registry; availability/permissions; positive declared costs"),
-    ("B10/B11", "calculate_metrics/final zip", "Undefined metrics and positional pairing", "Denominators/null statuses; stable-ID paired comparison"),
-    ("L01", "normalize_stage", "Missing/skipped/ambiguous context coerced", "Conservative seven-stage grammar; neutral unknown evidence"),
-    ("L02-L07", "model and stopping assumptions", "Uncalibrated threshold, independence, scope and greedy selection", "Disclosed assumptions, scope/calibration guards, evidence deduplication and sensitivity; empirical validation remains needed"),
-    ("L08-L11", "runner/evaluation/tests", "Resource, reproducibility and trace gaps", "Limits, grouped splits, paired seeds, full ledgers and automated tests"),
-    ("L12", "preprint versus checkout", "Published V2 artifacts unavailable", "New implementation/version labeled distinctly; no V2 reproduction claim"),
+    (
+        "B01",
+        "notebook cells 13/15",
+        "Undefined results and simulator",
+        "New Python evaluator/provider; original failures preserved as baseline",
+    ),
+    (
+        "B02",
+        "cell 13; calculate_posterior",
+        "Printing overwrites stage model",
+        "Immutable model and closure-based compatibility definitions",
+    ),
+    (
+        "B03",
+        "cells 5/7 action/outcome tables",
+        "Nine catalogue/model outcome mismatches",
+        "Canonical IDs plus validated legacy aliases",
+    ),
+    (
+        "B04",
+        "run_diagnosis",
+        "No stop check after final observation",
+        "One bounded runner returns structured terminal decisions",
+    ),
+    (
+        "B05",
+        "prior/stage/outcome tables",
+        "Rounding yields non-unit distributions",
+        "Versioned ratio-preserving normalization and provenance",
+    ),
+    (
+        "B06/B07",
+        "calculate_eig/update_posterior/should_stop",
+        "Zero division, invalid beliefs and NaNs",
+        "Explicit zero-support handling, log updates and schema validation",
+    ),
+    (
+        "B08/B09",
+        "rank_actions fallback/cost",
+        "Unexecutable fallback and invalid costs",
+        "Validated complete registry; availability/permissions; positive declared costs",
+    ),
+    (
+        "B10/B11",
+        "calculate_metrics/final zip",
+        "Undefined metrics and positional pairing",
+        "Denominators/null statuses; stable-ID paired comparison",
+    ),
+    (
+        "L01",
+        "normalize_stage",
+        "Missing/skipped/ambiguous context coerced",
+        "Conservative seven-stage grammar; neutral unknown evidence",
+    ),
+    (
+        "L02-L07",
+        "model and stopping assumptions",
+        "Uncalibrated threshold, independence, scope and greedy selection",
+        "Disclosed assumptions, scope/calibration guards, evidence deduplication and sensitivity; empirical validation remains needed",
+    ),
+    (
+        "L08-L11",
+        "runner/evaluation/tests",
+        "Resource, reproducibility and trace gaps",
+        "Limits, grouped splits, paired seeds, full ledgers and automated tests",
+    ),
+    (
+        "L12",
+        "preprint versus checkout",
+        "Published V2 artifacts unavailable",
+        "New implementation/version labeled distinctly; no V2 reproduction claim",
+    ),
 )
 
 CHANGELOG = {
@@ -176,52 +236,67 @@ REMAINING_LIMITATIONS = (
 
 def main():
     from ci_diagnosis.artifacts import read_python_artifact
-    result=read_python_artifact(Path(__file__).with_name('evaluation_results.py'))
-    print("# 1. Original architecture\n\n```mermaid\n"+ORIGINAL_ARCHITECTURE+"```\n")
+
+    result = read_python_artifact(Path(__file__).with_name("evaluation_results.py"))
+    print("# 1. Original architecture\n\n```mermaid\n" + ORIGINAL_ARCHITECTURE + "```\n")
     print("# 2. Audit findings\n")
     for code, location, issue, correction in AUDIT_FINDINGS:
         print(f"- {code}, {location}: {issue}. {correction}.")
-    print("\n# 3. Implemented architecture\n\n```mermaid\n"+IMPLEMENTED_ARCHITECTURE+"```\n")
+    print("\n# 3. Implemented architecture\n\n```mermaid\n" + IMPLEMENTED_ARCHITECTURE + "```\n")
     print("# 4. Python implementation and tests\n")
     for path, purpose in CHANGELOG.items():
         print(f"- {path}: {purpose}")
     print("\n# 5. Preserved original notebook\n")
-    print("SHA-256:",result["original_unit_checks"]["notebook_sha256"])
-    print("Original checks:",result["original_unit_checks"]["passed"])
-    print("Compatibility mode:",result["compatibility"]["mode"])
-    print("Unassisted Run All:",result["compatibility"]["unassisted_run_all"])
+    print("SHA-256:", result["original_unit_checks"]["notebook_sha256"])
+    print("Original checks:", result["original_unit_checks"]["passed"])
+    print("Compatibility mode:", result["compatibility"]["mode"])
+    print("Unassisted Run All:", result["compatibility"]["unassisted_run_all"])
     print("\n# 6. Actual baseline comparisons and evaluation\n")
     print("Historical saved outputs: reconciliation only; missing generator not reproduced.")
-    print("Controlled comparison: identical NEW synthetic bank, same 40 balanced cases and original stage mapping.")
+    print(
+        "Controlled comparison: identical NEW synthetic bank, same 40 balanced cases and original stage mapping."
+    )
     print("| Policy | Correct auto rate | Coverage | Selective accuracy | Mean diagnostic cost |")
     print("|---|---:|---:|---:|---:|")
-    for policy,m in result["controlled_legacy_comparison"]["metrics"].items():
-        sel="undefined" if m["selective_accuracy"] is None else f'{m["selective_accuracy"]:.2%}'
-        print(f'| {policy} | {m["correct_auto_rate"]:.2%} | {m["coverage"]:.2%} | {sel} | {m["average_diagnostic_cost"]:.4f} |')
-    print("\nRepository-disjoint test cohort:",result["split"]["test"]["case_count"],"cases;",
-          len({r["seed"] for r in result["test_synthetic"]}),"seeds;",
-          len({r["scenario"]["name"] for r in result["test_synthetic"]}),"declared synthetic scenarios.")
+    for policy, m in result["controlled_legacy_comparison"]["metrics"].items():
+        sel = "undefined" if m["selective_accuracy"] is None else f"{m['selective_accuracy']:.2%}"
+        print(
+            f"| {policy} | {m['correct_auto_rate']:.2%} | {m['coverage']:.2%} | {sel} | {m['average_diagnostic_cost']:.4f} |"
+        )
+    print(
+        "\nRepository-disjoint test cohort:",
+        result["split"]["test"]["case_count"],
+        "cases;",
+        len({r["seed"] for r in result["test_synthetic"]}),
+        "seeds;",
+        len({r["scenario"]["name"] for r in result["test_synthetic"]}),
+        "declared synthetic scenarios.",
+    )
     print("| Scenario | Policy | Pooled coverage | Pooled selective accuracy | Mean decision cost |")
     print("|---|---|---:|---:|---:|")
-    scenarios=sorted({run["scenario"]["name"] for run in result["test_synthetic"]})
+    scenarios = sorted({run["scenario"]["name"] for run in result["test_synthetic"]})
     for scenario in scenarios:
-        runs=[run for run in result["test_synthetic"] if run["scenario"]["name"]==scenario]
-        for policy in ("eig_per_cost","lowest_cost","fixed_test","stage_map","prior_map"):
-            metrics=[r["metrics"][policy] for r in runs]
-            total=sum(m["count"] for m in metrics);reports=sum(m["reports"] for m in metrics)
-            correct=sum(m["correct_reports"] for m in metrics)
-            selective=f"{correct/reports:.2%}" if reports else "undefined"
-            cost=sum(m["average_total_decision_cost"]*m["count"] for m in metrics)/total
-            print(f"| {scenario} | {policy} | {reports/total:.2%} | {selective} | {cost:.4f} |")
+        runs = [run for run in result["test_synthetic"] if run["scenario"]["name"] == scenario]
+        for policy in ("eig_per_cost", "lowest_cost", "fixed_test", "stage_map", "prior_map"):
+            metrics = [r["metrics"][policy] for r in runs]
+            total = sum(m["count"] for m in metrics)
+            reports = sum(m["reports"] for m in metrics)
+            correct = sum(m["correct_reports"] for m in metrics)
+            selective = f"{correct / reports:.2%}" if reports else "undefined"
+            cost = sum(m["average_total_decision_cost"] * m["count"] for m in metrics) / total
+            print(f"| {scenario} | {policy} | {reports / total:.2%} | {selective} | {cost:.4f} |")
     print("\nPooled seeds reuse the same cases: they are not additional independent repositories.")
-    print("Full per-class metrics, Brier/log loss, ECE, ledgers, conditional clustered intervals and sensitivity are in evaluation_results.py.")
+    print(
+        "Full per-class metrics, Brier/log loss, ECE, ledgers, conditional clustered intervals and sensitivity are in evaluation_results.py."
+    )
     print("\n# 7. Remaining limitations\n")
     for line in REMAINING_LIMITATIONS:
-        print("- "+line)
-    print("\n# 8. Change log\n\nAll files listed in section 4 were created as .py files. No existing notebook, workbook or project artifact was modified.")
+        print("- " + line)
+    print(
+        "\n# 8. Change log\n\nAll files listed in section 4 were created as .py files. No existing notebook, workbook or project artifact was modified."
+    )
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

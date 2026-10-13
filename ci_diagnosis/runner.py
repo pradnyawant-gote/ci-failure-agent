@@ -8,16 +8,16 @@ code and is not a live CI adapter. Time, cost and permissions are contractual.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
-from .model import STAGES,Model
 from .domain import ObservationProvider
-from .policy import POLICIES, BASELINES, rank_actions, top_state
-from .probability import ValidationError, ImpossibleEvidence, finite_number, update_belief
-from .records import RECORD_VERSION, PublicCase, Observation, ActionRecord, Diagnosis, fingerprint
-from .observability import emit,safe_detail
+from .model import STAGES, Model
+from .observability import emit, safe_detail
+from .policy import BASELINES, POLICIES, rank_actions, top_state
+from .probability import ImpossibleEvidence, ValidationError, finite_number, update_belief
+from .records import RECORD_VERSION, ActionRecord, Diagnosis, Observation, PublicCase, fingerprint
 
 
 @dataclass(frozen=True)
@@ -48,8 +48,15 @@ class Limits:
             object.__setattr__(self, "allowed_actions", frozenset(self.allowed_actions))
 
 
-def diagnose(case: PublicCase, model: Model, provider: ObservationProvider, policy: str="eig_per_cost",
-             limits: Limits | None=None, *, clock: Callable[[],float]=time.monotonic) -> Diagnosis:
+def diagnose(
+    case: PublicCase,
+    model: Model,
+    provider: ObservationProvider,
+    policy: str = "eig_per_cost",
+    limits: Limits | None = None,
+    *,
+    clock: Callable[[], float] = time.monotonic,
+) -> Diagnosis:
     if not isinstance(case, PublicCase) or case.stage not in STAGES:
         raise ValidationError("diagnose needs a validated PublicCase with normalized stage")
     if policy not in POLICIES:
@@ -57,7 +64,9 @@ def diagnose(case: PublicCase, model: Model, provider: ObservationProvider, poli
     limits = limits or Limits()
     if policy in BASELINES and not limits.benchmark_mode:
         raise ValidationError("forced baseline requires explicit benchmark_mode")
-    if limits.allowed_actions is not None and not limits.allowed_actions.issubset({a.action_id for a in model.actions}):
+    if limits.allowed_actions is not None and not limits.allowed_actions.issubset(
+        {a.action_id for a in model.actions}
+    ):
         raise ValidationError("unknown permitted action ID")
     initial_mismatch = False
     try:
@@ -66,25 +75,47 @@ def diagnose(case: PublicCase, model: Model, provider: ObservationProvider, poli
         belief = dict(model.priors)
         initial_mismatch = True
     records: list[ActionRecord] = []
-    candidates: list[dict[str,Any]] = []
+    candidates: list[dict[str, Any]] = []
     used: set[str] = set()
-    events: dict[str,tuple[str,str | None]] = {}
-    evidence: dict[str,str | None] = {}
-    attempts: dict[str,int] = {}
+    events: dict[str, tuple[str, str | None]] = {}
+    evidence: dict[str, str | None] = {}
+    attempts: dict[str, int] = {}
     spent = 0.0
     started = clock()
     elapsed_observed = 0.0
     model_hash, config_hash = model.model_hash, fingerprint(limits)
-    case_ref=fingerprint(case.case_id)
+    case_ref = fingerprint(case.case_id)
 
-    def finish(decision: str, reason: str, prediction: str | None=None) -> Diagnosis:
-        breached=spent>limits.budget+1e-10
-        emit("diagnostic_finished",case_ref=case_ref,policy=policy,decision=decision,reason=reason,
-             diagnostic_cost=spent,budget_breached=breached)
-        return Diagnosis(RECORD_VERSION, case.case_id, case.stage, policy, decision, reason, prediction,
-                         dict(belief), max(belief.values()), spent, tuple(records), model.version,
-                         model_hash, config_hash, tuple(candidates),budget_breached=breached,
-                         benchmark=policy in BASELINES)
+    def finish(decision: str, reason: str, prediction: str | None = None) -> Diagnosis:
+        breached = spent > limits.budget + 1e-10
+        emit(
+            "diagnostic_finished",
+            case_ref=case_ref,
+            policy=policy,
+            decision=decision,
+            reason=reason,
+            diagnostic_cost=spent,
+            budget_breached=breached,
+        )
+        return Diagnosis(
+            RECORD_VERSION,
+            case.case_id,
+            case.stage,
+            policy,
+            decision,
+            reason,
+            prediction,
+            dict(belief),
+            max(belief.values()),
+            spent,
+            tuple(records),
+            model.version,
+            model_hash,
+            config_hash,
+            tuple(candidates),
+            budget_breached=breached,
+            benchmark=policy in BASELINES,
+        )
 
     if not case.supported_scope:
         return finish("ESCALATE", "unsupported_scope")
@@ -93,7 +124,9 @@ def diagnose(case: PublicCase, model: Model, provider: ObservationProvider, poli
     if policy in BASELINES:
         # Forced baselines deliberately bypass the confidence gate. They are
         # evaluation comparators, not recommendations for automatic deployment.
-        prediction = "Test" if policy == "fixed_test" else top_state(model.priors if policy == "prior_map" else belief)
+        prediction = (
+            "Test" if policy == "fixed_test" else top_state(model.priors if policy == "prior_map" else belief)
+        )
         if policy == "fixed_test":
             belief = {s: float(s == "Test") for s in belief}
         elif policy == "prior_map":
@@ -123,28 +156,38 @@ def diagnose(case: PublicCase, model: Model, provider: ObservationProvider, poli
                 reason = "unaffordable"
             else:
                 try:
-                    available=provider.available(action.action_id)
+                    available = provider.available(action.action_id)
                     if type(available) is not bool:
                         raise ValidationError("availability must be boolean")
                 except Exception as exc:
-                    emit("provider_availability_error",case_ref=case_ref,action_id=action.action_id,
-                         exception_type=type(exc).__name__)
-                    rejected[action.action_id]="provider_availability_error"
+                    emit(
+                        "provider_availability_error",
+                        case_ref=case_ref,
+                        action_id=action.action_id,
+                        exception_type=type(exc).__name__,
+                    )
+                    rejected[action.action_id] = "provider_availability_error"
                     continue
                 if not available:
-                    rejected[action.action_id]="provider_unavailable"
+                    rejected[action.action_id] = "provider_unavailable"
                     continue
                 feasible.append(action)
                 continue
             rejected[action.action_id] = reason
         ranking = rank_actions(belief, feasible, policy)
         useful = [r for r in ranking if r["eig"] > limits.minimum_eig]
-        if policy=="risk_per_cost" and useful and not any(r["score"]>0 for r in useful):
+        if policy == "risk_per_cost" and useful and not any(r["score"] > 0 for r in useful):
             # Explicit EIG exploration fallback protects useful multistep sequences
             # when one-step unconstrained report risk has no immediate reduction.
-            useful=sorted(useful,key=lambda r:(-r["eig"]/r["cost"],r["catalogue_order"]))
-        candidates.append({"step": len(used), "ranking": ranking, "rejected": rejected,
-                           "remaining_budget": limits.budget - spent})
+            useful = sorted(useful, key=lambda r: (-r["eig"] / r["cost"], r["catalogue_order"]))
+        candidates.append(
+            {
+                "step": len(used),
+                "ranking": ranking,
+                "rejected": rejected,
+                "remaining_budget": limits.budget - spent,
+            }
+        )
         if not useful:
             return finish("ESCALATE", "no_informative_actions" if feasible else "no_feasible_actions")
         choice = useful[0]
@@ -156,44 +199,67 @@ def diagnose(case: PublicCase, model: Model, provider: ObservationProvider, poli
         applied = False
         terminal_reason = None
         remaining_seconds = max(0.0, limits.max_seconds - max(clock() - started, elapsed_observed))
-        if remaining_seconds<=0:
-            return finish("ESCALATE","deadline_exhausted")
-        cost_basis="reported"
-        reported_cost: float | None=None
+        if remaining_seconds <= 0:
+            return finish("ESCALATE", "deadline_exhausted")
+        cost_basis = "reported"
+        reported_cost: float | None = None
         try:
             obs = provider.observe(case.case_id, action.action_id, attempt, remaining_seconds)
             if not isinstance(obs, Observation):
                 raise ValidationError("provider must return Observation")
             cost = obs.validate(action)
-            reported_cost=obs.cost
-            cost_basis="reserved_estimate" if obs.cost is None else "reported"
+            reported_cost = obs.cost
+            cost_basis = "reserved_estimate" if obs.cost is None else "reported"
         except Exception as exc:
             # A malformed event or adapter exception is a failed measurement.
-            emit("provider_exception",case_ref=case_ref,action_id=action.action_id,exception_type=type(exc).__name__)
-            obs = Observation(action.action_id, fingerprint([case_ref,action.action_id,attempt,"invalid"]),
-                              "tool_error", detail=f"provider failure ({type(exc).__name__}); message omitted")
+            emit(
+                "provider_exception",
+                case_ref=case_ref,
+                action_id=action.action_id,
+                exception_type=type(exc).__name__,
+            )
+            obs = Observation(
+                action.action_id,
+                fingerprint([case_ref, action.action_id, attempt, "invalid"]),
+                "tool_error",
+                detail=f"provider failure ({type(exc).__name__}); message omitted",
+            )
             cost = action.cost
-            cost_basis="reserved_estimate"
+            cost_basis = "reserved_estimate"
             terminal_reason = "invalid_observation_or_provider_error"
-        if cost>action.cost+1e-10:
-            terminal_reason="provider_cost_overrun"
-        if clock() - started >= limits.max_seconds or elapsed_observed + obs.elapsed_seconds >= limits.max_seconds:
-            obs = Observation(action.action_id, obs.event_id, "timeout", evidence_id=obs.evidence_id,
-                              cost=cost, elapsed_seconds=obs.elapsed_seconds,
-                              detail="provider result arrived after the episode deadline")
+        if cost > action.cost + 1e-10:
+            terminal_reason = "provider_cost_overrun"
+        if (
+            clock() - started >= limits.max_seconds
+            or elapsed_observed + obs.elapsed_seconds >= limits.max_seconds
+        ):
+            obs = Observation(
+                action.action_id,
+                obs.event_id,
+                "timeout",
+                evidence_id=obs.evidence_id,
+                cost=cost,
+                elapsed_seconds=obs.elapsed_seconds,
+                detail="provider result arrived after the episode deadline",
+            )
         spent += cost
         elapsed_observed += obs.elapsed_seconds
         if terminal_reason:
-            reason=terminal_reason
-        elif obs.event_id in events and events[obs.event_id]!=(obs.status,obs.outcome):
-            reason=terminal_reason="contradictory_event_identity"
+            reason = terminal_reason
+        elif obs.event_id in events and events[obs.event_id] != (obs.status, obs.outcome):
+            reason = terminal_reason = "contradictory_event_identity"
         elif obs.event_id in events:
             reason = "duplicate_event"
             # Cost is incurred on the request even if the provider replayed an
             # old result; only evidence application is idempotent.
-        elif obs.status=="signal" and obs.evidence_id is not None and obs.evidence_id in evidence and evidence[obs.evidence_id]!=obs.outcome:
-            reason=terminal_reason="contradictory_evidence_identity"
-        elif obs.status=="signal" and obs.evidence_id is not None and obs.evidence_id in evidence:
+        elif (
+            obs.status == "signal"
+            and obs.evidence_id is not None
+            and obs.evidence_id in evidence
+            and evidence[obs.evidence_id] != obs.outcome
+        ):
+            reason = terminal_reason = "contradictory_evidence_identity"
+        elif obs.status == "signal" and obs.evidence_id is not None and obs.evidence_id in evidence:
             reason = "duplicate_evidence"
         elif obs.status == "signal":
             assert obs.outcome is not None  # Established by Observation.validate.
@@ -202,18 +268,44 @@ def diagnose(case: PublicCase, model: Model, provider: ObservationProvider, poli
                 applied = True
                 reason = "accepted_evidence"
                 if obs.evidence_id is not None:
-                    evidence[obs.evidence_id]=obs.outcome
+                    evidence[obs.evidence_id] = obs.outcome
             except ImpossibleEvidence:
                 reason = terminal_reason = "model_mismatch_zero_support"
         else:
             reason = obs.status
-        events[obs.event_id]=(obs.status,obs.outcome)
-        records.append(ActionRecord(action.action_id, action.name, attempt, obs.event_id, obs.evidence_id,
-                                    obs.status, obs.outcome, cost, spent, choice["score"], choice["eig"],
-                                    before, dict(belief), log_q, applied, reason, safe_detail(obs.detail),
-                                    cost_basis,reported_cost))
-        emit("observation_recorded",case_ref=case_ref,action_id=action.action_id,status=obs.status,
-             reason=reason,cost=cost,applied=applied)
+        events[obs.event_id] = (obs.status, obs.outcome)
+        records.append(
+            ActionRecord(
+                action.action_id,
+                action.name,
+                attempt,
+                obs.event_id,
+                obs.evidence_id,
+                obs.status,
+                obs.outcome,
+                cost,
+                spent,
+                choice["score"],
+                choice["eig"],
+                before,
+                dict(belief),
+                log_q,
+                applied,
+                reason,
+                safe_detail(obs.detail),
+                cost_basis,
+                reported_cost,
+            )
+        )
+        emit(
+            "observation_recorded",
+            case_ref=case_ref,
+            action_id=action.action_id,
+            status=obs.status,
+            reason=reason,
+            cost=cost,
+            applied=applied,
+        )
         if terminal_reason:
             return finish("ESCALATE", terminal_reason)
         retry = obs.status in {"tool_error", "timeout"} and attempt < limits.max_retries
@@ -221,4 +313,3 @@ def diagnose(case: PublicCase, model: Model, provider: ObservationProvider, poli
             used.add(action.action_id)
         # Re-enter the gate before testing remaining steps/cost. The final
         # successful observation can therefore produce a terminal report.
-

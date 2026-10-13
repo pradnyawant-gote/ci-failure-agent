@@ -16,16 +16,22 @@ class ImpossibleEvidence(ValidationError):
     """The supplied observation has zero support under the current belief."""
 
 
-def finite_number(value: object, name: str, *, minimum: float | None = None, maximum: float | None = None) -> float:
+def finite_number(
+    value: object, name: str, *, minimum: float | None = None, maximum: float | None = None
+) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValidationError(f"{name} must be a finite number")
-    if not math.isfinite(value):
+    try:
+        number = float(value)
+    except (OverflowError, ValueError) as exc:
+        raise ValidationError(f"{name} is not representable as a finite number") from exc
+    if not math.isfinite(number):
         raise ValidationError(f"{name} must be finite")
     if minimum is not None and value < minimum:
         raise ValidationError(f"{name} must be >= {minimum}")
     if maximum is not None and value > maximum:
         raise ValidationError(f"{name} must be <= {maximum}")
-    return float(value)
+    return number
 
 
 def validate_vector(values: object, states: Sequence[str], *, normalized: bool = False) -> dict[str, float]:
@@ -44,9 +50,9 @@ def normalize(weights: Mapping[str, float]) -> dict[str, float]:
     high = max(clean.values())
     if high <= 0:
         raise ImpossibleEvidence("zero or invalid normalization mass")
-    scaled = {s:w/high for s,w in clean.items()}
+    scaled = {s: w / high for s, w in clean.items()}
     total = math.fsum(scaled.values())
-    return {s:w/total for s,w in scaled.items()}
+    return {s: w / total for s, w in scaled.items()}
 
 
 def log_evidence(belief: Belief, likelihood: Belief) -> tuple[float, dict[str, float]]:
@@ -55,8 +61,7 @@ def log_evidence(belief: Belief, likelihood: Belief) -> tuple[float, dict[str, f
     states = tuple(belief)
     b = validate_vector(belief, states, normalized=True)
     likelihood = validate_vector(likelihood, states)
-    logs = {s: math.log(b[s]) + math.log(likelihood[s])
-            for s in states if b[s] > 0 and likelihood[s] > 0}
+    logs = {s: math.log(b[s]) + math.log(likelihood[s]) for s in states if b[s] > 0 and likelihood[s] > 0}
     if not logs:
         raise ImpossibleEvidence("observed evidence has zero model support")
     high = max(logs.values())
@@ -107,4 +112,3 @@ def expected_information_gain(belief: Belief, outcomes: OutcomeModel) -> float:
     if value < -1e-10 or value > entropy(belief) + 1e-10:
         raise ValidationError("information gain outside mathematical bounds")
     return max(0.0, value)
-

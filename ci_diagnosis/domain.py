@@ -9,7 +9,15 @@ if TYPE_CHECKING:
     from .records import Observation
 
 STATES = ("Code", "Test", "Dependency", "CI/Config")
-STAGES = ("Build", "Test", "Setup / Dependency", "Quality / Analysis", "Deploy / Publish", "Ambiguous", "Unknown")
+STAGES = (
+    "Build",
+    "Test",
+    "Setup / Dependency",
+    "Quality / Analysis",
+    "Deploy / Publish",
+    "Ambiguous",
+    "Unknown",
+)
 
 Belief = Mapping[str, float]
 OutcomeModel = Mapping[str, Belief]
@@ -44,4 +52,3 @@ class LegacyActionSpec(TypedDict):
     tags: list[str]
     cost: float
     outcomes: list[str]
-
