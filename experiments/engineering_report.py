@@ -337,6 +337,29 @@ FLAWS = (
     ),
 )
 
+FLAWS = FLAWS + (
+    (
+        "P017",
+        "Medium",
+        "latent numerical defect",
+        "metrics.py:85 mean/median; model.py:135 fit_stage_model",
+        "Two valid 1e308 costs overflowed naive mean/median; large smoothing overflowed conditional denominators",
+        "Valid extreme inputs produced infinite summaries or invalid distributions",
+        "Scale before summing and normalize smoothing along each probability axis",
+        "Independent large-value mean/median/smoothing tests pass",
+    ),
+    (
+        "P018",
+        "Medium",
+        "legacy integration defect",
+        "legacy.py:112 reference_policy_run; original notebook outcome table",
+        "Raw non-normalized legacy branches can yield negative source EIG; fresh reference run failed the validated record contract",
+        "Reference comparisons were incomplete and risked silently relabeling an invalid legacy score",
+        "Preserve original decisions/updates and source_eig; label normalized diagnostic EIG separately",
+        "Complete 40-case reference regression retains negative raw scores without invalid corrected EIG",
+    ),
+)
+
 PLAN = (
     {
         "id": "T01",
