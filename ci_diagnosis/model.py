@@ -113,7 +113,7 @@ class Model:
 
 def default_model() -> Model:
     actions = []
-    corrections = []
+    corrections: list[dict[str,Any]] = []
     for action_id, raw in zip(ACTION_IDS, RAW_ACTIONS):
         name = raw["name"]
         entries = list(RAW_OUTCOMES[name].items())

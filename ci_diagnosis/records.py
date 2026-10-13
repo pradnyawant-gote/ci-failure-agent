@@ -39,7 +39,11 @@ def freeze(value: Any) -> Any:
         return MappingProxyType({k:freeze(v) for k,v in value.items()})
     if isinstance(value,(list,tuple)):
         return tuple(freeze(v) for v in value)
-    return value
+    if isinstance(value,(set,frozenset)):
+        return frozenset(freeze(v) for v in value)
+    if value is None or isinstance(value,(str,bool,int,float)):
+        return value
+    raise ValidationError("unsupported immutable snapshot value")
 
 
 def plain(value: object) -> Any:

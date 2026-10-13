@@ -10,6 +10,8 @@ repositories and test repositories are reported as separate experiments.
 No empirical calibration or production-readiness claim is made.
 """
 
+from __future__ import annotations
+
 import argparse
 import base64
 import hashlib
@@ -21,14 +23,17 @@ import sys
 import zlib
 from dataclasses import replace
 from pathlib import Path
+from collections.abc import Sequence
+from typing import Any
 
 from . import __version__
+from .artifacts import write_python_artifact as write_python_artifact
 from .compatibility import execute_notebook_compatibility
-from .data import load_workbook, grouped_split
-from .legacy import reconcile_saved_traces, original_unit_checks, reference_policy_run, DEFAULT_NOTEBOOK
+from .data import load_workbook, grouped_split,SourceRow
+from .legacy import reconcile_saved_traces, original_unit_checks, reference_policy_run, DEFAULT_NOTEBOOK, LegacyReference
 from .metrics import (calculate_metrics, scored_record, paired_difference, risk_coverage,
                       DEFAULT_WRONG_LOSS, DEFAULT_REVIEW_COST)
-from .model import default_model, fit_stage_model, STATES
+from .model import default_model, fit_stage_model, STATES,Model
 from .policy import POLICIES,BASELINES
 from .probability import ValidationError
 from .records import plain, fingerprint, PublicCase
@@ -38,7 +43,8 @@ from .simulation import OutcomeBank, Scenario
 DEFAULT_WORKBOOK = Path(__file__).resolve().parents[1] / "data" / "replication-labeling.xlsx"
 
 
-def cohort_run(rows, model, scenario, seed, limits=None, policies=POLICIES):
+def cohort_run(rows: list[SourceRow], model: Model, scenario: Scenario, seed: int, limits: Limits | None=None,
+               policies: Sequence[str]=POLICIES) -> dict[str,Any]:
     truths = {r.source_id: r.state for r in rows}
     bank = OutcomeBank(model, truths, seed, scenario)
     limits = limits or Limits()
@@ -56,7 +62,7 @@ def cohort_run(rows, model, scenario, seed, limits=None, policies=POLICIES):
             "descriptive_risk_coverage": {p: risk_coverage(rs) for p, rs in records.items()}}
 
 
-def controlled_legacy_comparison(rows, model, seed=42):
+def controlled_legacy_comparison(rows: list[SourceRow], model: Model, seed: int=42) -> dict[str,Any]:
     import pandas as pd
     frame = pd.DataFrame({"index": range(len(rows)), "state": [r.state for r in rows]})
     if any(sum(r.state == s for r in rows) < 10 for s in STATES):
@@ -66,8 +72,9 @@ def controlled_legacy_comparison(rows, model, seed=42):
             ("test", "tests", "junit", "pytest", "cucumber")) else "Build") for r in selected]
     bank = OutcomeBank(model, {r.source_id: r.state for r in selected}, seed)
     records = {}
+    reference=LegacyReference()
     for policy in ("eig_per_cost", "lowest_cost"):
-        records["legacy_reference_"+policy] = [scored_record(reference_policy_run(c, bank, policy), r.state)
+        records["legacy_reference_"+policy] = [scored_record(reference_policy_run(c, bank, policy,reference=reference), r.state)
                                                  for c, r in zip(cases, selected)]
         records["corrected_unbounded_"+policy] = [scored_record(diagnose(c, model, bank, policy,
                     Limits(max_steps=10, budget=100, max_attempts=10)), r.state) for c, r in zip(cases, selected)]
@@ -84,7 +91,7 @@ def controlled_legacy_comparison(rows, model, seed=42):
                 field="correct", seed=seed, repetitions=200) for p in ("eig_per_cost", "lowest_cost")}}
 
 
-def sensitivity(rows, model, seed=42):
+def sensitivity(rows: list[SourceRow], model: Model, seed: int=42) -> dict[str,Any]:
     """One-at-a-time stress tests; no data-driven choice of favorable settings."""
     truths = {r.source_id: r.state for r in rows}
     fixed_bank = OutcomeBank(model, truths, seed)
@@ -124,14 +131,15 @@ def sensitivity(rows, model, seed=42):
     return {"status": "synthetic one-at-a-time sensitivity; no settings selected from these results", "seed": seed, "metrics": summary}
 
 
-def run_experiment(workbook=DEFAULT_WORKBOOK, *, seeds=(42, 43, 44), split_seed=42, compatibility=True):
+def run_experiment(workbook: str | Path=DEFAULT_WORKBOOK, *, seeds: Sequence[int]=(42,43,44),
+                   split_seed: int=42, compatibility: bool=True) -> dict[str,Any]:
     if not seeds or len(set(seeds)) != len(seeds) or any(type(s) is not int for s in seeds):
         raise ValidationError("outcome seeds must be nonempty, unique integers")
     rows, source = load_workbook(workbook)
     train, validation, test = grouped_split(rows, split_seed)
     base = default_model()
     fitted = fit_stage_model(train, base)
-    split = {name: {"case_count": len(cohort), "projects": sorted({r.project for r in cohort}),
+    split: dict[str,Any] = {name: {"case_count": len(cohort), "projects": sorted({r.project for r in cohort}),
                     "case_ids": [r.source_id for r in cohort], "class_counts": {s: sum(r.state == s for r in cohort) for s in STATES}}
              for name, cohort in (("train", train), ("validation", validation), ("test", test))}
     if any(set(split[a]["projects"]) & set(split[b]["projects"]) for a, b in itertools.combinations(split, 2)):
@@ -169,45 +177,8 @@ def run_experiment(workbook=DEFAULT_WORKBOOK, *, seeds=(42, 43, 44), split_seed=
                             "repository-disjoint source counts do not establish live-CI generalization"]}
 
 
-def write_python_artifact(path, result):
-    path = Path(path)
-    if path.suffix != ".py":
-        raise ValidationError("evaluation artifacts in this project must use .py")
-    # Full ledgers contain repeated schemas. Keep the Python-only artifact small
-    # without truncating any observations, candidate scores or terminal records.
-    def encode_special(value):
-        if isinstance(value,float) and not math.isfinite(value):
-            if math.isnan(value):
-                raise ValidationError("NaN cannot be exported")
-            return {"__infinite_metric__": 1 if value > 0 else -1}
-        if isinstance(value,dict):
-            return {k:encode_special(v) for k,v in value.items()}
-        if isinstance(value,(list,tuple)):
-            return [encode_special(v) for v in value]
-        return value
-    payload=json.dumps(encode_special(result),ensure_ascii=True,sort_keys=True,separators=(",",":"),allow_nan=False).encode()
-    encoded=base64.b85encode(zlib.compress(payload,9)).decode("ascii")
-    chunks="\n".join("    "+repr(encoded[i:i+120]) for i in range(0,len(encoded),120))
-    text=('"""Complete versioned evaluation ledger, compressed to avoid duplicated schema text.\n'
-          'Synthetic observations and costs; no production evidence.\n'
-          'Regenerate: python -B -m ci_diagnosis.evaluation --output '+path.as_posix()+'\n"""\n'
-          'import base64\nimport hashlib\nimport json\nimport zlib\n\n'
-          'PAYLOAD_SHA256 = '+repr(hashlib.sha256(payload).hexdigest())+'\n'
-          '_ENCODED = (\n'+chunks+'\n)\n\n'
-          'def _metric_hook(value):\n'
-          '    if set(value) == {"__infinite_metric__"}:\n'
-          '        return float("inf") * value["__infinite_metric__"]\n'
-          '    return value\n\n'
-          '_payload = zlib.decompress(base64.b85decode(_ENCODED))\n'
-          'if hashlib.sha256(_payload).hexdigest() != PAYLOAD_SHA256:\n'
-          '    raise ValueError("Evaluation payload checksum mismatch")\n'
-          'EVALUATION = json.loads(_payload, object_hook=_metric_hook)\n'
-          'del _payload, _ENCODED\n')
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
 
-
-def main(argv=None):
+def main(argv: list[str] | None=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workbook", type=Path, default=DEFAULT_WORKBOOK)
     parser.add_argument("--output", type=Path)

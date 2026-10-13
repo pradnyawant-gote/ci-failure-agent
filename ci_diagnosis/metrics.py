@@ -23,7 +23,7 @@ def scored_record(result: Diagnosis, truth: str, *, wrong_loss: Mapping[str,floa
     for state, loss in losses.items():
         finite_number(loss, state + " loss", minimum=0)
     finite_number(review_cost, "review cost", minimum=0)
-    record = plain(result)
+    record: dict[str,Any] = plain(result)
     correct = record["decision"] == "REPORT" and record["prediction"] == truth
     terminal_loss = 0.0 if correct else losses[truth] if record["decision"] == "REPORT" else review_cost
     record.update({"true_state": truth, "correct": correct, "terminal_loss": terminal_loss,
@@ -144,7 +144,7 @@ def calculate_metrics(records: Sequence[Mapping[str,Any]], *, bins: int=10) -> d
     classwise_brier={s:mean([(r["final_belief"][s]-int(r["true_state"]==s))**2 for r in records]) for s in STATES}
     classwise_ece={}
     for state in STATES:
-        buckets=[[] for _ in range(bins)]
+        buckets: list[list[tuple[float,int]]]=[[] for _ in range(bins)]
         for r in records:
             p=r["final_belief"][state]
             buckets[min(bins-1,int(p*bins))].append((p,int(r["true_state"]==state)))
@@ -208,7 +208,7 @@ def paired_difference(left: Sequence[Mapping[str,Any]], right: Sequence[Mapping[
     deltas = {k: a[k][field] - b[k][field] for k in ids}
     if clusters is not None and not set(ids).issubset(clusters):
         raise ValidationError("missing repository cluster")
-    group_ids = {}
+    group_ids: dict[str,list[str]] = {}
     for k in ids:
         group_ids.setdefault(clusters[k] if clusters is not None else k, []).append(k)
     groups = sorted(group_ids)

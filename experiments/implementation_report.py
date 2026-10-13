@@ -175,7 +175,8 @@ REMAINING_LIMITATIONS = (
 
 
 def main():
-    from evaluation_results import EVALUATION as result
+    from ci_diagnosis.artifacts import read_python_artifact
+    result=read_python_artifact(Path(__file__).with_name('evaluation_results.py'))
     print("# 1. Original architecture\n\n```mermaid\n"+ORIGINAL_ARCHITECTURE+"```\n")
     print("# 2. Audit findings\n")
     for code, location, issue, correction in AUDIT_FINDINGS:

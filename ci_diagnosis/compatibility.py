@@ -6,15 +6,19 @@ It does not edit notebook cells, overwrite saved outputs, or claim unassisted
 Run All now works. Notebook-style functions accept legacy display aliases.
 """
 
+from __future__ import annotations
+
 import contextlib
 import io
 import os
 from dataclasses import replace
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any,Iterable,Iterator
 
 from .legacy import DEFAULT_NOTEBOOK, read_notebook
-from .model import default_model, STATES
+from .model import default_model, STATES,Model,Action
+from .domain import Belief,RankedAction
 from .policy import rank_actions as modern_rank, top_state
 from .probability import ValidationError, entropy as modern_entropy, expected_information_gain, update_belief
 from .records import PublicCase, Observation, plain
@@ -22,22 +26,22 @@ from .runner import diagnose, Limits
 from .simulation import OutcomeBank
 
 
-class AliasOutcomes(Mapping):
-    def __init__(self, action):
+class AliasOutcomes(Mapping[str,dict[str,float]]):
+    def __init__(self, action: Action) -> None:
         self.action = action
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[str]:
         return iter(self.action.labels.values())
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.action.outcomes)
 
-    def __getitem__(self, key):
+    def __getitem__(self, key: str) -> dict[str,float]:
         return dict(self.action.outcomes[self.action.canonical_outcome(key)])
 
 
-def legacy_result(result, truth):
-    r = plain(result)
+def legacy_result(result: Any, truth: str) -> dict[str,Any]:
+    r: dict[str,Any] = plain(result)
     return {"case_id": int(r["case_id"]) if r["case_id"].isdigit() else r["case_id"],
             "true_root_cause": truth, "final_prediction": r["prediction"], "decision": r["decision"],
             "reason": r["reason"], "final_belief": r["final_belief"],
@@ -47,30 +51,30 @@ def legacy_result(result, truth):
             "total_cost": r["diagnostic_cost"], "correct": r["decision"] == "REPORT" and r["prediction"] == truth}
 
 
-def install_definitions(namespace, model=None):
-    model = model or default_model()
-    by_name = {a.name: a for a in model.actions}
+def install_definitions(namespace: dict[str,Any], model: Model | None=None) -> Model:
+    selected_model = model or default_model()
+    by_name = {a.name: a for a in selected_model.actions}
     namespace["states"] = list(STATES)
-    namespace["priors"] = dict(model.priors)
-    namespace["likelihoods"] = {z: dict(v) for z, v in model.stage_likelihoods.items()}
+    namespace["priors"] = dict(selected_model.priors)
+    namespace["likelihoods"] = {z: dict(v) for z, v in selected_model.stage_likelihoods.items()}
     namespace["actions"] = [{"name": a.name, "tags": list(a.tags), "cost": a.cost,
-                              "outcomes": list(a.labels.values())} for a in model.actions]
-    namespace["outcome_models"] = {a.name: AliasOutcomes(a) for a in model.actions}
-    namespace["calculate_posterior"] = model.initial_belief
+                              "outcomes": list(a.labels.values())} for a in selected_model.actions]
+    namespace["outcome_models"] = {a.name: AliasOutcomes(a) for a in selected_model.actions}
+    namespace["calculate_posterior"] = selected_model.initial_belief
     namespace["entropy"] = lambda values: modern_entropy(dict(zip(STATES, values)))
     namespace["calculate_eig"] = expected_information_gain
     namespace["update_posterior_with_outcome"] = lambda b, likelihood: update_belief(b, likelihood)[0]
     namespace["should_stop"] = lambda b: (max(b.values()) >= .90 if top_state(b) else False, top_state(b))
     namespace["get_candidate_actions"] = lambda z, actions: [a for a in actions if "all" in a["tags"] or z in a["tags"]]
 
-    def rank(b, candidates, outcome_models):
+    def rank(b: Belief, candidates: list[dict[str,Any]], outcome_models: Mapping[str,Any]) -> tuple[list[RankedAction],list[Any]]:
         if any(a["name"] not in by_name or a["name"] not in outcome_models for a in candidates):
-            raise ValidationError("unsupported action/model; compatibility cannot execute unknown checks")
+            raise ValidationError("unsupported action/selected_model; compatibility cannot execute unknown checks")
         checked=[]
         for item in candidates:
             action=by_name[item["name"]]
             supplied=outcome_models[item["name"]]
-            canonical={}
+            canonical: dict[str,dict[str,float]]={}
             for label, vector in supplied.items():
                 key=action.canonical_outcome(label)
                 if key in canonical and canonical[key] != vector:
@@ -80,7 +84,7 @@ def install_definitions(namespace, model=None):
         ranked = modern_rank(b, checked)
         return ranked, []
 
-    def decision(b, candidates, outcome_models):
+    def decision(b: Belief, candidates: list[dict[str,Any]], outcome_models: Mapping[str,Any]) -> dict[str,Any]:
         label = top_state(b)
         if b[label] >= .90:
             return {"decision": "REPORT", "root_cause": label}
@@ -89,40 +93,40 @@ def install_definitions(namespace, model=None):
         return {"decision": "RECOMMEND", "action": useful[0]} if useful else {"decision": "ESCALATE"}
 
     class LegacySequence:
-        def __init__(self, outcomes):
+        def __init__(self, outcomes: Iterable[str]) -> None:
             self.items = iter(outcomes)
 
-        def available(self, action_id):
+        def available(self, action_id: str) -> bool:
             return True
 
-        def observe(self, case_id, action_id, attempt, timeout_seconds):
-            action = next(a for a in model.actions if a.action_id == action_id)
+        def observe(self, case_id: str, action_id: str, attempt: int, timeout_seconds: float) -> Observation:
+            action = next(a for a in selected_model.actions if a.action_id == action_id)
             try:
                 value = next(self.items)
             except StopIteration:
                 return Observation(action_id, f"missing:{action_id}", "missing", cost=0)
             return Observation(action_id, f"legacy:{action_id}", "signal", action.canonical_outcome(value), f"legacy:{action_id}")
 
-    def run(stage, outcomes):
-        r = diagnose(PublicCase("manual", stage), model, LegacySequence(outcomes),
+    def run(stage: str, outcomes: Iterable[str]) -> dict[str,Any]:
+        r = diagnose(PublicCase("manual", stage), selected_model, LegacySequence(outcomes),
                      limits=Limits(max_steps=10, budget=100, max_attempts=10))
-        data = plain(r)
+        data: dict[str,Any] = plain(r)
         data["root_cause"] = r.prediction
         return data
 
     namespace["rank_actions"] = rank
     namespace["decide_next_step"] = decision
     namespace["run_diagnosis"] = run
-    return model
+    return selected_model
 
 
-def prepare_evaluation(namespace, model, seed=42):
+def prepare_evaluation(namespace: dict[str,Any], model: Model, seed: int=42) -> None:
     cases = namespace["evaluation_cases"].to_dict("records")
     truths = {str(c["case_id"]): c["true_root_cause"] for c in cases}
     bank = OutcomeBank(model, truths, seed)
     action_by_name = {a.name: a for a in model.actions}
 
-    def evaluate(case, policy):
+    def evaluate(case: dict[str,Any], policy: str) -> dict[str,Any]:
         result = diagnose(PublicCase(str(case["case_id"]), case["failed_stage"]), model, bank, policy,
                           Limits(max_steps=10, budget=100, max_attempts=10))
         r = legacy_result(result, case["true_root_cause"])
@@ -133,15 +137,23 @@ def prepare_evaluation(namespace, model, seed=42):
 
     namespace["results"] = [evaluate(c, "eig_per_cost") for c in cases]
     namespace["evaluate_case_cost_only"] = lambda c: evaluate(c, "lowest_cost")
-    namespace["simulate_action_outcome"] = lambda name, truth, case_id: action_by_name[name].labels[
-        bank.observe(str(case_id), action_by_name[name].action_id).outcome]
+    def simulate(name: str, truth: str, case_id: int | str) -> str:
+        event=bank.observe(str(case_id),action_by_name[name].action_id)
+        assert event.outcome is not None
+        return action_by_name[name].labels[event.outcome]
+    namespace["simulate_action_outcome"] = simulate
     namespace["_synthetic_bank_manifest"] = bank.manifest()
 
 
-def execute_notebook_compatibility(path=DEFAULT_NOTEBOOK):
+def execute_notebook_compatibility(path: str | Path=DEFAULT_NOTEBOOK, *, timeout: float=60.0) -> dict[str,Any]:
+    from .notebook_worker import execute_worker
+    return execute_worker(Path(path),"compatibility",timeout)
+
+
+def _compatibility_inprocess(path: str | Path=DEFAULT_NOTEBOOK) -> dict[str,Any]:
     path = Path(path).resolve()
     nb, before = read_notebook(path)
-    namespace = {}
+    namespace: dict[str,Any] = {}
     output = io.StringIO()
     cwd = Path.cwd()
     model = default_model()
