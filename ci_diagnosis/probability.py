@@ -1,7 +1,11 @@
 """Validated probability arithmetic. Exact zeros retain their meaning."""
 
+from __future__ import annotations
+
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+
+from .domain import Belief, OutcomeModel
 
 
 class ValidationError(ValueError):
@@ -12,7 +16,7 @@ class ImpossibleEvidence(ValidationError):
     """The supplied observation has zero support under the current belief."""
 
 
-def finite_number(value, name, *, minimum=None, maximum=None):
+def finite_number(value: object, name: str, *, minimum: float | None = None, maximum: float | None = None) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValidationError(f"{name} must be a finite number")
     if not math.isfinite(value):
@@ -24,7 +28,7 @@ def finite_number(value, name, *, minimum=None, maximum=None):
     return float(value)
 
 
-def validate_vector(values, states, *, normalized=False):
+def validate_vector(values: object, states: Sequence[str], *, normalized: bool = False) -> dict[str, float]:
     if not isinstance(values, Mapping) or set(values) != set(states):
         raise ValidationError("probability keys must exactly match the model states")
     checked = {s: finite_number(values[s], s, minimum=0, maximum=1) for s in states}
@@ -33,7 +37,7 @@ def validate_vector(values, states, *, normalized=False):
     return checked
 
 
-def normalize(weights):
+def normalize(weights: Mapping[str, float]) -> dict[str, float]:
     if not isinstance(weights, Mapping) or not weights:
         raise ValidationError("weights must be a nonempty mapping")
     clean = {s: finite_number(w, s, minimum=0) for s, w in weights.items()}
@@ -45,7 +49,7 @@ def normalize(weights):
     return {s:w/total for s,w in scaled.items()}
 
 
-def log_evidence(belief, likelihood):
+def log_evidence(belief: Belief, likelihood: Belief) -> tuple[float, dict[str, float]]:
     if not isinstance(belief, Mapping):
         raise ValidationError("belief must be a mapping")
     states = tuple(belief)
@@ -60,7 +64,7 @@ def log_evidence(belief, likelihood):
     return log_q, logs
 
 
-def update_belief(belief, likelihood):
+def update_belief(belief: Belief, likelihood: Belief) -> tuple[dict[str, float], float]:
     log_q, logs = log_evidence(belief, likelihood)
     # Rescale before normalizing instead of multiplying tiny probabilities.
     high = max(logs.values())
@@ -69,14 +73,14 @@ def update_belief(belief, likelihood):
     return posterior, log_q
 
 
-def entropy(belief):
+def entropy(belief: Belief) -> float:
     if not isinstance(belief, Mapping):
         raise ValidationError("belief must be a mapping")
     b = validate_vector(belief, tuple(belief), normalized=True)
     return -math.fsum(p * math.log2(p) for p in b.values() if p > 0)
 
 
-def validate_outcome_model(outcomes, states):
+def validate_outcome_model(outcomes: object, states: Sequence[str]) -> dict[str, dict[str, float]]:
     if not isinstance(outcomes, Mapping) or not outcomes:
         raise ValidationError("an executable action needs an outcome model")
     clean = {o: validate_vector(v, states) for o, v in outcomes.items()}
@@ -86,7 +90,7 @@ def validate_outcome_model(outcomes, states):
     return clean
 
 
-def expected_information_gain(belief, outcomes):
+def expected_information_gain(belief: Belief, outcomes: OutcomeModel) -> float:
     if not isinstance(belief, Mapping):
         raise ValidationError("belief must be a mapping")
     states = tuple(belief)

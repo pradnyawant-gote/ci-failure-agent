@@ -77,12 +77,19 @@ class RunnerTests(unittest.TestCase):
     def test_outcome_pairing_validation(self):
         for item in (Observation("wrong", "e", "signal", "signal"),
                      Observation("a0", "e", "signal", "unknown"),
-                     Observation("a0", "e", "tool_error", "no_signal"),
-                     Observation("a0", "e", "signal", "signal", cost=100)):
+                     Observation("a0", "e", "tool_error", "no_signal")):
             with self.subTest(item=item):
                 result = self.run_case([item])
                 self.assertEqual(result.reason, "invalid_observation_or_provider_error")
                 self.assertEqual(result.final_belief, dict(self.model.priors))
+
+    def test_overrun_is_visible_and_stops_without_claiming_budget_compliance(self):
+        result=self.run_case([Observation("a0","overrun","signal","signal",cost=100)])
+        self.assertEqual(result.reason,"provider_cost_overrun")
+        self.assertEqual(result.diagnostic_cost,100)
+        self.assertTrue(result.budget_breached)
+        self.assertEqual(result.final_belief,dict(self.model.priors))
+        self.assertEqual(result.actions_taken[0].reported_cost,100)
 
     def test_zero_support_observation_refers(self):
         model = two_state_model(1)

@@ -29,7 +29,7 @@ from .legacy import reconcile_saved_traces, original_unit_checks, reference_poli
 from .metrics import (calculate_metrics, scored_record, paired_difference, risk_coverage,
                       DEFAULT_WRONG_LOSS, DEFAULT_REVIEW_COST)
 from .model import default_model, fit_stage_model, STATES
-from .policy import POLICIES
+from .policy import POLICIES,BASELINES
 from .probability import ValidationError
 from .records import plain, fingerprint, PublicCase
 from .runner import diagnose, Limits
@@ -42,13 +42,15 @@ def cohort_run(rows, model, scenario, seed, limits=None, policies=POLICIES):
     truths = {r.source_id: r.state for r in rows}
     bank = OutcomeBank(model, truths, seed, scenario)
     limits = limits or Limits()
-    records = {policy: [scored_record(diagnose(r.public(), model, bank, policy, limits), r.state) for r in rows]
+    records = {policy: [scored_record(diagnose(r.public(), model, bank, policy, replace(limits,benchmark_mode=policy in BASELINES)), r.state) for r in rows]
                for policy in policies}
     clusters = {r.source_id: r.project for r in rows}
     comparison = paired_difference(records["eig_per_cost"], records["lowest_cost"], seed=seed,
                                    repetitions=200, clusters=clusters) if {"eig_per_cost", "lowest_cost"}.issubset(records) else None
     return {"seed": seed, "scenario": plain(scenario), "model_version": model.version,
-            "model_hash": model.model_hash, "limits": plain(limits), "bank": bank.manifest(limits.max_retries+1),
+            "model_hash": model.model_hash, "limits": plain(limits),
+            "policy_limits": {p:plain(replace(limits,benchmark_mode=p in BASELINES)) for p in policies},
+            "bank": bank.manifest(limits.max_retries+1),
             "metrics": {p: calculate_metrics(rs) for p, rs in records.items()}, "records": records,
             "paired_cost_eig_minus_lowest": comparison,
             "descriptive_risk_coverage": {p: risk_coverage(rs) for p, rs in records.items()}}
@@ -72,7 +74,7 @@ def controlled_legacy_comparison(rows, model, seed=42):
         records["corrected_bounded_"+policy] = [scored_record(diagnose(c, model, bank, policy), r.state)
                                                   for c, r in zip(cases, selected)]
     for policy in ("fixed_test", "stage_map", "prior_map"):
-        records[policy] = [scored_record(diagnose(c, model, bank, policy), r.state) for c, r in zip(cases, selected)]
+        records[policy] = [scored_record(diagnose(c, model, bank, policy,Limits(benchmark_mode=True)), r.state) for c, r in zip(cases, selected)]
     return {"status": "in-sample control; original policy functions, NEW shared synthetic bank",
             "stage_preprocessing": "original binary keyword rule for every policy in this control",
             "case_ids": [r.source_id for r in selected], "bank": bank.manifest(),

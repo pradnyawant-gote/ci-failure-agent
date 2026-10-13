@@ -4,6 +4,8 @@ Source SHA256: 3e8dc01a20397bbd1d7a9f52002bf6eef35c2703bc96e9b7085117303f77c00f
 Runtime normalization and its provenance are implemented in model.py.
 """
 
+from .domain import LegacyActionSpec
+
 RAW_PRIORS = {'Code': 0.177, 'Test': 0.3934, 'Dependency': 0.2984, 'CI/Config': 0.1311}
 
 RAW_STAGE_LIKELIHOODS = {'Build': {'Code': 0.574, 'Test': 0.358, 'Dependency': 0.429, 'CI/Config': 0.275},
@@ -14,7 +16,7 @@ RAW_STAGE_LIKELIHOODS = {'Build': {'Code': 0.574, 'Test': 0.358, 'Dependency': 0
  'Ambiguous': {'Code': 0.074, 'Test': 0.033, 'Dependency': 0.077, 'CI/Config': 0.15},
  'Unknown': {'Code': 0.074, 'Test': 0.017, 'Dependency': 0.099, 'CI/Config': 0.25}}
 
-RAW_ACTIONS = [{'name': 'Inspect pipeline logs',
+RAW_ACTIONS: list[LegacyActionSpec] = [{'name': 'Inspect pipeline logs',
   'tags': ['all'],
   'cost': 1,
   'outcomes': ['Relevant error found', 'No clear error found']},

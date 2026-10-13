@@ -5,27 +5,23 @@ Normalization preserves ratios (including the two 1.001 binary columns) rather
 than inventing intended complements. Sample-derived smoothing is separate.
 """
 
-from dataclasses import dataclass
-from types import MappingProxyType
+from __future__ import annotations
+
+from dataclasses import dataclass,field
 from collections.abc import Mapping
+from typing import TYPE_CHECKING,Any
 
 from .parameters import RAW_PRIORS, RAW_STAGE_LIKELIHOODS, RAW_ACTIONS, RAW_OUTCOMES
 from .probability import (ValidationError, finite_number, normalize, validate_vector,
                           validate_outcome_model, update_belief)
-from .records import fingerprint, plain
+from .records import fingerprint, plain,freeze,identifier
+from .domain import Belief,OutcomeModel,STATES as STATES,STAGES as STAGES
 
-STATES = ("Code", "Test", "Dependency", "CI/Config")
-STAGES = ("Build", "Test", "Setup / Dependency", "Quality / Analysis", "Deploy / Publish", "Ambiguous", "Unknown")
+if TYPE_CHECKING:
+    from .data import SourceRow
+
 ACTION_IDS = ("pipeline_logs", "failed_stage", "last_success", "recent_changes", "dependency_changes",
               "ci_configuration", "runbooks", "image_cache", "hosting", "server_session")
-
-
-def freeze(value):
-    if isinstance(value, Mapping):
-        return MappingProxyType({k: freeze(v) for k, v in value.items()})
-    if isinstance(value, (list, tuple)):
-        return tuple(freeze(v) for v in value)
-    return value
 
 
 @dataclass(frozen=True)
@@ -34,14 +30,17 @@ class Action:
     name: str
     cost: float
     tags: tuple[str, ...]
-    outcomes: Mapping
-    labels: Mapping
-    aliases: Mapping
+    outcomes: OutcomeModel
+    labels: Mapping[str,str]
+    aliases: Mapping[str,str]
     permission: str = "read_only"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isinstance(self.action_id,str) or not self.action_id or not isinstance(self.name,str) or not self.name:
             raise ValidationError("action requires stable ID and display name")
+        identifier(self.action_id,"action_id",maximum=128)
+        if len(self.name)>256:
+            raise ValidationError("action name too long")
         if finite_number(self.cost, "action cost", minimum=0) <= 0:
             raise ValidationError("action cost must be strictly positive")
         if not self.tags or any(t not in STAGES + ("all",) for t in self.tags):
@@ -51,29 +50,35 @@ class Action:
         validate_outcome_model(self.outcomes, STATES)
         if not isinstance(self.labels,Mapping) or not isinstance(self.aliases,Mapping):
             raise ValidationError("outcome labels and aliases must be mappings")
+        if any(not isinstance(k,str) or not isinstance(v,str) or not k or not v or len(k)>256 or len(v)>256
+               for mapping in (self.labels,self.aliases) for k,v in mapping.items()):
+            raise ValidationError("outcome labels/aliases must be bounded nonempty strings")
         if set(self.labels) != set(self.outcomes) or any(v not in self.outcomes for v in self.aliases.values()):
             raise ValidationError("outcome labels/aliases must match canonical IDs")
         for field in ("outcomes", "labels", "aliases"):
             object.__setattr__(self, field, freeze(getattr(self, field)))
         object.__setattr__(self, "tags", tuple(self.tags))
 
-    def canonical_outcome(self, value):
+    def canonical_outcome(self, value: str) -> str:
+        if not isinstance(value,str):
+            raise ValidationError("outcome identifier must be text")
         if value in self.outcomes:
             return value
         if value in self.aliases:
             return self.aliases[value]
-        raise ValidationError(f"unknown outcome for {self.action_id}: {value!r}")
+        raise ValidationError(f"unknown outcome for {self.action_id}")
 
 
 @dataclass(frozen=True)
 class Model:
     version: str
-    priors: Mapping
-    stage_likelihoods: Mapping
+    priors: Belief
+    stage_likelihoods: Mapping[str,Belief]
     actions: tuple[Action, ...]
-    provenance: Mapping
+    provenance: Mapping[str,Any]
+    _identity: str = field(init=False,repr=False,compare=False,metadata={"serialize":False})
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isinstance(self.version,str) or not self.version:
             raise ValidationError("model version is required")
         if not isinstance(self.provenance,Mapping) or any(not isinstance(a,Action) for a in self.actions):
@@ -92,12 +97,13 @@ class Model:
         for name in ("priors", "stage_likelihoods", "provenance"):
             object.__setattr__(self, name, freeze(getattr(self, name)))
         object.__setattr__(self, "actions", tuple(self.actions))
+        object.__setattr__(self,"_identity",fingerprint(self))
 
     @property
-    def model_hash(self):
-        return fingerprint(self)
+    def model_hash(self) -> str:
+        return self._identity
 
-    def initial_belief(self, stage):
+    def initial_belief(self, stage: str) -> dict[str,float]:
         if stage not in STAGES:
             raise ValidationError("stage must be normalized before inference")
         if stage in ("Unknown", "Ambiguous"):
@@ -105,7 +111,7 @@ class Model:
         return update_belief(self.priors, self.stage_likelihoods[stage])[0]
 
 
-def default_model():
+def default_model() -> Model:
     actions = []
     corrections = []
     for action_id, raw in zip(ACTION_IDS, RAW_ACTIONS):
@@ -132,7 +138,7 @@ def default_model():
     })
 
 
-def fit_stage_model(training_rows, base=None, *, alpha=1.0, beta=1.0):
+def fit_stage_model(training_rows: list[SourceRow], base: Model | None = None, *, alpha: float=1.0, beta: float=1.0) -> Model:
     alpha = finite_number(alpha, "alpha", minimum=0)
     beta = finite_number(beta, "beta", minimum=0)
     if alpha == 0 or beta == 0 or not training_rows:

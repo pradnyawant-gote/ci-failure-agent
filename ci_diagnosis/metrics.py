@@ -1,18 +1,20 @@
 """Explicit abstention, probability-quality and cost metrics with denominators."""
 
+from __future__ import annotations
+
 import math
 import random
 from collections import Counter
+from collections.abc import Mapping,Sequence
+from typing import Any
 
 from .model import STATES
 from .probability import ValidationError, finite_number, validate_vector
+from .records import Diagnosis,plain,fingerprint,RECORD_VERSION
+from .decision_cost import DEFAULT_WRONG_LOSS as DEFAULT_WRONG_LOSS,DEFAULT_REVIEW_COST as DEFAULT_REVIEW_COST,DecisionCosts
 
-# Declared loss assumptions from the project's newer preprint, not money/time.
-DEFAULT_WRONG_LOSS = {"Code": 40.0, "Test": 25.0, "Dependency": 45.0, "CI/Config": 65.0}
-DEFAULT_REVIEW_COST = 12.0
-
-
-def scored_record(result, truth, *, wrong_loss=None, review_cost=DEFAULT_REVIEW_COST):
+def scored_record(result: Diagnosis, truth: str, *, wrong_loss: Mapping[str,float] | None=None,
+                  review_cost: float=DEFAULT_REVIEW_COST) -> dict[str,Any]:
     if truth not in STATES:
         raise ValidationError("scoring requires one supported true state")
     losses = dict(DEFAULT_WRONG_LOSS if wrong_loss is None else wrong_loss)
@@ -21,22 +23,70 @@ def scored_record(result, truth, *, wrong_loss=None, review_cost=DEFAULT_REVIEW_
     for state, loss in losses.items():
         finite_number(loss, state + " loss", minimum=0)
     finite_number(review_cost, "review cost", minimum=0)
-    from .records import plain, fingerprint
     record = plain(result)
     correct = record["decision"] == "REPORT" and record["prediction"] == truth
     terminal_loss = 0.0 if correct else losses[truth] if record["decision"] == "REPORT" else review_cost
     record.update({"true_state": truth, "correct": correct, "terminal_loss": terminal_loss,
-                   "total_decision_cost": record["diagnostic_cost"] + terminal_loss})
+                   "total_decision_cost": record["diagnostic_cost"] + terminal_loss,
+                   "loss_model":{"wrong_loss":losses,"review_cost":review_cost,"version":"declared-loss/1"}})
     record["record_hash"] = fingerprint(record)
+    validate_scored_record(record)
     return record
 
 
-def verify_record_hash(record):
-    from .records import fingerprint
+def verify_record_hash(record: Mapping[str,Any]) -> bool:
     return record.get("record_hash") == fingerprint({k: v for k, v in record.items() if k != "record_hash"})
 
 
-def calculate_metrics(records, *, bins=10):
+def validate_scored_record(record: Mapping[str,Any]) -> None:
+    """A checksum proves identity, not semantic correctness or authenticity."""
+    required={"record_version","case_id","decision","prediction","true_state","correct","final_belief",
+              "confidence","diagnostic_cost","terminal_loss","total_decision_cost","loss_model","actions_taken","record_hash"}
+    if not required.issubset(record) or record["record_version"]!=RECORD_VERSION:
+        raise ValidationError("unsupported or incomplete scored record schema")
+    if not verify_record_hash(record):
+        raise ValidationError("diagnostic record checksum mismatch")
+    truth=record["true_state"]
+    decision=record["decision"]
+    prediction=record["prediction"]
+    if truth not in STATES or decision not in {"REPORT","ESCALATE"}:
+        raise ValidationError("invalid truth/disposition")
+    if (decision=="REPORT" and prediction not in STATES) or (decision=="ESCALATE" and prediction is not None):
+        raise ValidationError("prediction disagrees with disposition")
+    correct=decision=="REPORT" and prediction==truth
+    if type(record["correct"]) is not bool or record["correct"]!=correct:
+        raise ValidationError("incorrect correctness flag")
+    costs=DecisionCosts(record["loss_model"]["wrong_loss"],record["loss_model"]["review_cost"])
+    expected_loss=0.0 if correct else costs.wrong_loss[truth] if decision=="REPORT" else costs.review_cost
+    for name in ("diagnostic_cost","terminal_loss","total_decision_cost"):
+        finite_number(record[name],name,minimum=0)
+    if not math.isclose(record["terminal_loss"],expected_loss,abs_tol=1e-9,rel_tol=0):
+        raise ValidationError("terminal loss disagrees with declared loss model")
+    if not math.isclose(record["total_decision_cost"],record["diagnostic_cost"]+expected_loss,abs_tol=1e-9,rel_tol=0):
+        raise ValidationError("total decision cost inconsistent")
+    belief=validate_vector(record["final_belief"],STATES,normalized=True)
+    if not math.isclose(record["confidence"],max(belief.values()),abs_tol=1e-10,rel_tol=0):
+        raise ValidationError("terminal confidence inconsistent")
+    cumulative=0.0
+    previous: Mapping[str,float] | None=None
+    for action in record["actions_taken"]:
+        cumulative+=finite_number(action["cost"],"action cost",minimum=0)
+        if not math.isclose(action["cumulative_cost"],cumulative,abs_tol=1e-9,rel_tol=0):
+            raise ValidationError("cumulative action cost inconsistent")
+        before=validate_vector(action["posterior_before"],STATES,normalized=True)
+        after=validate_vector(action["posterior_after"],STATES,normalized=True)
+        if previous is not None and any(abs(before[s]-previous[s])>1e-10 for s in STATES):
+            raise ValidationError("belief trace is discontinuous")
+        if not action["applied"] and any(abs(before[s]-after[s])>1e-10 for s in STATES):
+            raise ValidationError("unapplied evidence changed belief")
+        previous=after
+    if not math.isclose(cumulative,record["diagnostic_cost"],abs_tol=1e-9,rel_tol=0):
+        raise ValidationError("diagnostic cost inconsistent with actions")
+    if previous is not None and any(abs(previous[s]-belief[s])>1e-10 for s in STATES):
+        raise ValidationError("terminal belief differs from final action")
+
+
+def calculate_metrics(records: Sequence[Mapping[str,Any]], *, bins: int=10) -> dict[str,Any]:
     if type(bins) is not int or bins < 1:
         raise ValidationError("bins must be a positive integer")
     records = list(records)
@@ -50,6 +100,7 @@ def calculate_metrics(records, *, bins=10):
     brier, log_losses = [], []
     top_correct, top_confidence = [], []
     for r in records:
+        validate_scored_record(r)
         if "record_hash" in r and not verify_record_hash(r):
             raise ValidationError("diagnostic record checksum mismatch")
         truth = r.get("true_state")
@@ -82,7 +133,7 @@ def calculate_metrics(records, *, bins=10):
     precision = {s: confusion[s][s] / predicted_support[s] if predicted_support[s] else None for s in STATES}
     recall = {s: confusion[s][s] / support[s] if support[s] else None for s in STATES}
     effort = sorted(r["diagnostic_cost"] for r in records)
-    def mean(values):
+    def mean(values: Sequence[float]) -> float | None:
         return sum(values) / len(values) if values else None
     # For comparability, macro precision convention assigns zero to unpredicted
     # classes; individual undefined precision remains explicitly None.
@@ -127,7 +178,7 @@ def calculate_metrics(records, *, bins=10):
             "loss_units": "assumed relative loss/effort units; human outcomes not modeled"}
 
 
-def risk_coverage(records, thresholds=(0.5, 0.7, 0.8, 0.9, 0.95, 0.99)):
+def risk_coverage(records: Sequence[Mapping[str,Any]], thresholds: Sequence[float]=(0.5, 0.7, 0.8, 0.9, 0.95, 0.99)) -> list[dict[str,Any]]:
     """Descriptive re-thresholding of final beliefs, not a rerun of action policies."""
     points = []
     for threshold in thresholds:
@@ -140,7 +191,9 @@ def risk_coverage(records, thresholds=(0.5, 0.7, 0.8, 0.9, 0.95, 0.99)):
     return points
 
 
-def paired_difference(left, right, *, field="total_decision_cost", seed=42, repetitions=500, clusters=None):
+def paired_difference(left: Sequence[Mapping[str,Any]], right: Sequence[Mapping[str,Any]], *,
+                      field: str="total_decision_cost", seed: int=42, repetitions: int=500,
+                      clusters: Mapping[str,str] | None=None) -> dict[str,Any]:
     if type(repetitions) is not int or repetitions < 2:
         raise ValidationError("bootstrap needs at least two repetitions")
     a = {r["case_id"]: r for r in left}
