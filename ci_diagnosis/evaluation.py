@@ -274,7 +274,11 @@ def run_experiment(
     code_paths = sorted(
         list(Path(__file__).parent.glob("*.py"))
         + list((root / "tests").glob("*.py"))
-        + [root / "experiments/agent_simulation.py", root / "experiments/implementation_report.py"]
+        + [
+            root / "experiments/agent_simulation.py",
+            root / "experiments/implementation_report.py",
+            root / "experiments/engineering_report.py",
+        ]
     )
     code_hashes = {
         p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in code_paths
@@ -291,6 +295,7 @@ def run_experiment(
             "openpyxl": openpyxl.__version__,
         },
         "source_code_hashes": code_hashes,
+        "configuration_hash": hashlib.sha256((root / "pyproject.toml").read_bytes()).hexdigest(),
         "split_seed": split_seed,
         "split": split,
         "loss_assumptions": {
@@ -324,7 +329,9 @@ def run_experiment(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workbook", type=Path, default=DEFAULT_WORKBOOK)
-    parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--output", type=Path, help="Python data artifact; use a new filename to preserve historical runs"
+    )
     parser.add_argument("--seeds", type=int, nargs="+", default=[42, 43, 44])
     parser.add_argument("--split-seed", type=int, default=42)
     args = parser.parse_args(argv)

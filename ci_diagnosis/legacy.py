@@ -18,7 +18,7 @@ from typing import Any
 from .domain import ObservationProvider
 from .model import STATES
 from .parameters import RAW_ACTIONS, RAW_OUTCOMES, RAW_PRIORS, RAW_STAGE_LIKELIHOODS
-from .probability import ValidationError, normalize, update_belief
+from .probability import ValidationError, expected_information_gain, normalize, update_belief
 from .records import RECORD_VERSION, ActionRecord, Diagnosis, fingerprint
 
 NOTEBOOK_SHA256 = "3e8dc01a20397bbd1d7a9f52002bf6eef35c2703bc96e9b7085117303f77c00f"
@@ -255,12 +255,14 @@ class LegacyReference:
                     action.cost,
                     spent,
                     decision["action"].get("score", 0),
-                    decision["action"].get("eig", 0),
+                    expected_information_gain(before, action.outcomes),
                     before,
                     dict(belief),
                     None,
                     True,
                     "original_update",
+                    detail="original selection/update unchanged; source_eig retains raw score; eig uses normalized diagnostic model",
+                    source_eig=decision["action"].get("eig"),
                 )
             )
             remaining = [a for a in remaining if a["name"] != action.name]

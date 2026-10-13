@@ -6,12 +6,13 @@ import logging
 import subprocess
 import sys
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
 from ci_diagnosis.decision_cost import DecisionCosts
 from ci_diagnosis.metrics import calculate_metrics, scored_record
-from ci_diagnosis.model import STATES, fit_stage_model
+from ci_diagnosis.model import STATES, default_model, fit_stage_model
 from ci_diagnosis.observability import LOGGER, JsonFormatter
 from ci_diagnosis.probability import ValidationError, finite_number
 from ci_diagnosis.records import Observation, PublicCase, fingerprint, plain
@@ -134,6 +135,17 @@ class IntegrityAndCostTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             fingerprint({1: "one", "1": "another"})
 
+    def test_invalid_label_detail_and_status_are_explicit_validation_errors(self):
+        model = two_state_model()
+        with self.assertRaises(ValidationError):
+            replace(model.actions[0], labels={"signal": {"bad": "object"}, "no_signal": "Negative"})
+        for event in (
+            Observation("a0", "event", "signal", "signal", detail=[]),
+            Observation("a0", "event", [], None),
+        ):
+            with self.assertRaises(ValidationError):
+                event.validate(model.actions[0])
+
     def test_duplicate_faults_and_mutable_seed_refused(self):
         model = two_state_model()
         with self.assertRaises(ValidationError):
@@ -200,6 +212,22 @@ class RiskMathTests(unittest.TestCase):
 
 
 class IsolatedNotebookTests(unittest.TestCase):
+    @unittest.skipUnless(
+        importlib.util.find_spec("pandas") and importlib.util.find_spec("openpyxl"),
+        "workbook dependencies required",
+    )
+    def test_full_controlled_reference_preserves_raw_negative_scores(self):
+        from ci_diagnosis.data import load_workbook
+        from ci_diagnosis.evaluation import DEFAULT_WORKBOOK, controlled_legacy_comparison
+
+        rows, _ = load_workbook(DEFAULT_WORKBOOK)
+        result = controlled_legacy_comparison(rows, default_model())
+        reference = result["records"]["legacy_reference_eig_per_cost"]
+        self.assertEqual(len(reference), 40)
+        actions = [a for r in reference for a in r["actions_taken"]]
+        self.assertTrue(any(a["source_eig"] is not None and a["source_eig"] < 0 for a in actions))
+        self.assertTrue(all(a["eig"] >= 0 for a in actions))
+
     def test_untrusted_digest_refused_before_subprocess(self):
         from ci_diagnosis.notebook_worker import execute_worker
 

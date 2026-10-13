@@ -101,6 +101,7 @@ class OutcomeBank:
         if not self._unavailable.issubset(self._actions):
             raise ValidationError("unknown unavailable action")
         self._model_hash = model.model_hash
+        self._scenario_payload = plain(self._scenario)
 
     @property
     def seed(self) -> int:
@@ -126,13 +127,13 @@ class OutcomeBank:
         if case_id not in self._truths or action_id not in self._actions:
             raise ValidationError("unknown case/action in outcome bank")
         action = self._actions[action_id]
-        evidence_id = fingerprint([SIMULATOR_VERSION, self.seed, self.scenario, case_id, action_id])
+        evidence_id = fingerprint([SIMULATOR_VERSION, self.seed, self._scenario_payload, case_id, action_id])
         event_id = fingerprint([evidence_id, attempt])
         if not self.available(action_id):
             return Observation(action_id, event_id, "unavailable", cost=0)
         if timeout_seconds <= 0:
             return Observation(action_id, event_id, "timeout", cost=0)
-        u = keyed_uniform(self.seed, self.scenario, case_id, action_id, attempt, "status")
+        u = keyed_uniform(self.seed, self._scenario_payload, case_id, action_id, attempt, "status")
         cutoff = 0.0
         for status, rate in (
             ("missing", self.scenario.missing_rate),
@@ -156,10 +157,10 @@ class OutcomeBank:
             no_signal *= 1 - action.outcomes["signal"][state]
         p = (1 - self.scenario.noise) * (1 - no_signal) + self.scenario.noise * 0.5
         p = min(1.0, max(0.0, p + self.scenario.signal_bias))
-        shared = keyed_uniform(self.seed, self.scenario, case_id, "shared_latent")
-        independent = keyed_uniform(self.seed, self.scenario, case_id, action_id, "signal")
+        shared = keyed_uniform(self.seed, self._scenario_payload, case_id, "shared_latent")
+        independent = keyed_uniform(self.seed, self._scenario_payload, case_id, action_id, "signal")
         use_shared = (
-            keyed_uniform(self.seed, self.scenario, case_id, action_id, "correlation")
+            keyed_uniform(self.seed, self._scenario_payload, case_id, action_id, "correlation")
             < self.scenario.correlation
         )
         outcome = "signal" if (shared if use_shared else independent) < p else "no_signal"

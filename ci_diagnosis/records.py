@@ -52,6 +52,9 @@ def freeze(value: Any) -> Any:
 
 
 def plain(value: object) -> Any:
+    # Most ledger leaves are primitives; avoid dataclass/ABC introspection there.
+    if value is None or type(value) in (str, int, float, bool):
+        return value
     if is_dataclass(value) and not isinstance(value, type):
         return {
             f.name: plain(getattr(value, f.name)) for f in fields(value) if f.metadata.get("serialize", True)
@@ -144,6 +147,7 @@ class ActionRecord:
     detail: str = ""
     cost_basis: str = "reserved_estimate"
     reported_cost: float | None = None
+    source_eig: float | None = None
 
     def __post_init__(self) -> None:
         identifier(self.action_id, "action_id")
@@ -161,6 +165,10 @@ class ActionRecord:
         finite_number(self.score, "score")
         if self.reported_cost is not None:
             finite_number(self.reported_cost, "reported_cost", minimum=0)
+        if self.source_eig is not None:
+            # Historical reference diagnostics can be negative because its raw
+            # binary columns are not normalized. Preserve, never reinterpret it.
+            finite_number(self.source_eig, "source_eig")
         if self.log_predictive_probability is not None:
             finite_number(self.log_predictive_probability, "log predictive probability", maximum=1e-10)
         if type(self.applied) is not bool or self.cost_basis not in {"reported", "reserved_estimate"}:

@@ -12,7 +12,15 @@ The historical notebook and version-1 result artifact remain unchanged.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import sys
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 BASELINE_COMMIT = "02e7d04"
 BASELINE_TESTS = 69
@@ -445,20 +453,195 @@ PLAN = (
 )
 
 
+CHANGELOG = {
+    "ci_diagnosis/__init__.py": "modified: engineering version 1.1.0",
+    "ci_diagnosis/domain.py": "created: vocabulary, typed provider protocol and ranking contracts",
+    "ci_diagnosis/records.py": "modified: bounded schema, immutable snapshots and record schema 2",
+    "ci_diagnosis/model.py": "modified: complete validation, cached immutable identity and stable smoothing",
+    "ci_diagnosis/probability.py": "modified: typed numerical contracts and explicit oversized-integer failure",
+    "ci_diagnosis/policy.py": "modified: existing policies retained; experimental risk/cost comparator",
+    "ci_diagnosis/decision_cost.py": "created: immutable declared losses and verified expected risk calculations",
+    "ci_diagnosis/runner.py": "modified: permission/deadline ordering, explicit baseline purpose, overruns and provenance conflicts",
+    "ci_diagnosis/observability.py": "created: sanitized structured event logging",
+    "ci_diagnosis/simulation.py": "modified: immutable scenario configuration, valid distinct causes and keyed-draw-preserving optimization",
+    "ci_diagnosis/data.py": "modified: bounded immutable workbook-byte intake, typed rows and source identity",
+    "ci_diagnosis/artifacts.py": "created: atomic publication and bounded data-only artifact reader",
+    "ci_diagnosis/metrics.py": "modified: semantic ledger/cost checks, explicit error rate and numerically stable summaries",
+    "ci_diagnosis/legacy.py": "modified: typed bounded inspection and reusable pinned original-policy reference",
+    "ci_diagnosis/compatibility.py": "modified: typed legacy closures; parent-safe subprocess entry",
+    "ci_diagnosis/notebook_worker.py": "created: pinned, bounded child-process notebook checks",
+    "ci_diagnosis/parameters.py": "modified: typing/formatting only; literal probabilities and costs unchanged",
+    "ci_diagnosis/evaluation.py": "modified: benchmark-only baseline opt-in, experimental comparator, new schema/manifests and safe publication",
+    "ci_diagnosis/benchmark.py": "created: fixed 335-record instrumented workload and predeclared regression gates",
+    "ci_diagnosis/quality.py": "created: environment, pytest, lint, format, strict type and benchmark gates",
+    "tests/helpers.py": "modified: independent fixtures now have coherent cost traces",
+    "tests/test_artifacts.py": "modified: schema-2 artifact roundtrip and invalid-value tests",
+    "tests/test_runner.py": "modified: explicit overrun accounting regression",
+    "tests/test_probability.py": "modified: consistent formatting; independent mathematical cases preserved",
+    "tests/test_data_metrics.py": "modified: formatting and semantic-record-compatible fixtures",
+    "tests/test_simulation_compatibility.py": "modified: formatting; original regression cases retained",
+    "tests/test_engineering.py": "created: admission, privacy, immutability, numerical, risk and process regressions",
+    "tests/test_persistence.py": "created: real atomicity, corruption, overwrite-protection and non-executing-read tests",
+    "experiments/agent_simulation.py": "modified: formatting; Python CLI remains the entry point",
+    "experiments/implementation_report.py": "modified: previous release results loaded as data instead of executed Python",
+    "experiments/engineering_report.py": "created: four diagrams, flaw register, plan, results and readiness assessment",
+    "experiments/engineering_quality_results.py": "created: actual engineering gate and benchmark evidence",
+    "experiments/engineering_evaluation_results.py": "created: complete version-1.1 experimental ledger; previous result artifact preserved",
+    "pyproject.toml": "created: non-executable package/dependency/test/lint/type configuration",
+    ".gitignore": "created: generated caches/build metadata exclusions",
+    "README.md": "modified: current commands, justified interface changes and explicit research scope",
+}
+
+
+def _load(name: str) -> dict[str, Any]:
+    from ci_diagnosis.artifacts import read_python_artifact
+
+    path = Path(__file__).with_name(name)
+    return read_python_artifact(path) if path.exists() else {}
+
+
+def _current(hashes: dict[str, str]) -> bool:
+    return bool(hashes) and all(
+        (ROOT / path).is_file() and hashlib.sha256((ROOT / path).read_bytes()).hexdigest() == expected
+        for path, expected in hashes.items()
+    )
+
+
 def main() -> int:
+    quality = _load("engineering_quality_results.py")
+    experiment = _load("engineering_evaluation_results.py")
+    config_hash = hashlib.sha256((ROOT / "pyproject.toml").read_bytes()).hexdigest()
+    quality_current = (
+        quality.get("passed", False)
+        and _current(quality.get("source_hashes", {}))
+        and quality.get("configuration_hash") == config_hash
+    )
+    experiment_current = (
+        _current(experiment.get("source_code_hashes", {}))
+        and experiment.get("configuration_hash") == config_hash
+    )
     for title, diagram in (
-        ("Current architecture", CURRENT_ARCHITECTURE),
-        ("Current decision cycle", CURRENT_WORKFLOW),
-        ("Target architecture", TARGET_ARCHITECTURE),
-        ("Implementation gates", IMPLEMENTATION_GATES),
+        ("1. Current architecture at audit baseline", CURRENT_ARCHITECTURE),
+        ("2. Current decision cycle at audit baseline", CURRENT_WORKFLOW),
     ):
         print(f"# {title}\n\n```mermaid\n{diagram}```\n")
-    print("Baseline locations refer to Git", BASELINE_COMMIT)
-    print(json.dumps({"flaw_register": FLAWS, "implementation_plan": PLAN}, indent=2))
-    print(
-        "Production status: incomplete pending empirical calibration, diagnostic traces and operational adapters."
+    print("# 3. Prioritized flaw register\n")
+    print("Exact baseline locations refer to Git", BASELINE_COMMIT, ". No Critical defect was established.")
+    names = (
+        "id",
+        "severity",
+        "classification",
+        "baseline_location",
+        "observed_behavior_and_reproduction",
+        "impact",
+        "correction",
+        "verification",
     )
-    return 0
+    register = []
+    for item in FLAWS:
+        row = dict(zip(names, item, strict=False))
+        row["status"] = (
+            "verified correction"
+            if item[0].startswith("P") and quality_current
+            else "incomplete/unverified"
+            if item[0].startswith("L")
+            else "implemented; validation stale/incomplete"
+        )
+        register.append(row)
+    print(json.dumps(register, indent=2))
+    for title, diagram in (
+        ("4. Proposed target architecture", TARGET_ARCHITECTURE),
+        ("5. Implementation and validation gates", IMPLEMENTATION_GATES),
+    ):
+        print(f"\n# {title}\n\n```mermaid\n{diagram}```\n")
+    print("# 6. Traceable implementation plan\n")
+    plan = [
+        {
+            **task,
+            "status": "complete for research-simulation engineering"
+            if quality_current and experiment_current
+            else "implemented; evidence incomplete/stale",
+        }
+        for task in PLAN
+    ]
+    print(json.dumps(plan, indent=2))
+    print("\n# 7. Source, tests and actual engineering results\n")
+    print("Quality evidence current:", quality_current, ". Experiment evidence current:", experiment_current)
+    for gate in quality.get("gates", []):
+        print(gate["gate"], "PASS" if gate["passed"] else "FAIL", gate.get("stdout", ""))
+    print("Instrumented benchmark:", json.dumps(quality.get("benchmark", {}), indent=2))
+    print("\n# 8. Preserved artifacts\n")
+    for filename, expected in (
+        ("experiments/agent_simulation.ipynb", BASELINE_NOTEBOOK_SHA256),
+        ("experiments/evaluation_results.py", BASELINE_RESULT_SHA256),
+        (
+            "data/replication-labeling.xlsx",
+            "39647c82583a2039b69fcf57fa30808d46f9bbf3cbcf6caf023921c2588de860",
+        ),
+    ):
+        print(
+            filename,
+            "UNCHANGED"
+            if hashlib.sha256((ROOT / filename).read_bytes()).hexdigest() == expected
+            else "MISMATCH",
+        )
+    print("\n# 9. Actual evaluation and comparisons\n")
+    if experiment:
+        print("Source split:", {k: v["case_count"] for k, v in experiment["split"].items()})
+        print(
+            "Historical saved traces are reconciliation only. Controlled comparisons use a NEW shared synthetic bank."
+        )
+        print("| Control policy | Correct auto rate | Coverage | Selective accuracy | Mean diagnostic cost |")
+        print("|---|---:|---:|---:|---:|")
+        for policy, m in experiment["controlled_legacy_comparison"]["metrics"].items():
+            print(
+                f"| {policy} | {m['correct_auto_rate']:.2%} | {m['coverage']:.2%} | {m['selective_accuracy']:.2%} | {m['average_diagnostic_cost']:.4f} |"
+            )
+        print(
+            "\n| Synthetic scenario | Policy | Coverage pooled over seeds | Selective accuracy | Mean decision cost |"
+        )
+        print("|---|---|---:|---:|---:|")
+        for scenario in sorted({r["scenario"]["name"] for r in experiment["test_synthetic"]}):
+            runs = [r for r in experiment["test_synthetic"] if r["scenario"]["name"] == scenario]
+            for policy in runs[0]["metrics"]:
+                ms = [r["metrics"][policy] for r in runs]
+                n = sum(m["count"] for m in ms)
+                reports = sum(m["reports"] for m in ms)
+                correct = sum(m["correct_reports"] for m in ms)
+                selected = "undefined" if not reports else f"{correct / reports:.2%}"
+                cost = sum(m["average_total_decision_cost"] * m["count"] for m in ms) / n
+                print(f"| {scenario} | {policy} | {reports / n:.2%} | {selected} | {cost:.4f} |")
+        print(
+            "Repeated seeds reuse the same cases, not additional independent repositories. Clustered intervals are conditional on the declared simulator."
+        )
+        print(
+            "Per-class, Brier/log-loss, calibration, cost, reason-code and sensitivity records are complete in the data artifact."
+        )
+    print("\n# 10. File-by-file change log\n")
+    for path, change in CHANGELOG.items():
+        print(f"- [{path}](<{(ROOT / path).as_posix()}>): {change}")
+    print("\n# 11. Remaining risks and outstanding work\n")
+    for issue in FLAWS:
+        if issue[0].startswith("L"):
+            print("-", issue[0], issue[4], "Required:", issue[6])
+    print(
+        "- Credential-pattern redaction is verified; real log privacy, access, retention and authenticity policies remain unvalidated."
+    )
+    print("- Risk/cost is a greedy experimental comparator, not net utility or a proof of optimal planning.")
+    print(
+        "- No additional notebook was created. Unassisted original notebook execution retains its historical failures; compatibility is explicitly assisted."
+    )
+    print("\n# 12. Evidence-based readiness assessment\n")
+    print(
+        "Research-simulation engineering:",
+        "gates passed with current evidence"
+        if quality_current and experiment_current
+        else "incomplete/stale evidence",
+    )
+    print(
+        "Production/live-CI deployment: INCOMPLETE. Real diagnostic likelihoods/costs, empirical calibration, independent operational evaluation, human outcomes and validated adapters are required."
+    )
+    return 0 if quality_current and experiment_current else 1
 
 
 if __name__ == "__main__":

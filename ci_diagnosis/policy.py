@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from .decision_cost import DecisionCosts
 from .domain import Belief, RankedAction
 from .model import STATES, Action
-from .probability import ValidationError, expected_information_gain, validate_vector
+from .probability import ValidationError, _eig_validated, entropy, validate_vector
 
 SEQUENTIAL_POLICIES = ("eig_per_cost", "lowest_cost", "risk_per_cost")
 BASELINES = ("fixed_test", "stage_map", "prior_map")
@@ -20,13 +20,14 @@ def rank_actions(
     policy: str = "eig_per_cost",
     costs: DecisionCosts | None = None,
 ) -> list[RankedAction]:
-    validate_vector(belief, STATES, normalized=True)
+    b = validate_vector(belief, STATES, normalized=True)
     if policy not in SEQUENTIAL_POLICIES:
         raise ValidationError("unknown sequential policy")
     ranked: list[RankedAction] = []
     costs = costs or DecisionCosts()
+    current_entropy = entropy(b)
     for order, action in enumerate(actions):
-        eig = expected_information_gain(belief, action.outcomes)
+        eig = _eig_validated(b, action.outcomes, current_entropy)
         risk_delta = costs.expected_reduction(belief, action.outcomes) if policy == "risk_per_cost" else 0.0
         ranked.append(
             {

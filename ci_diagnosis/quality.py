@@ -131,6 +131,7 @@ def run_quality() -> dict[str, Any]:
             p.relative_to(ROOT).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
             for p in sorted(source_paths)
         },
+        "configuration_hash": hashlib.sha256((ROOT / "pyproject.toml").read_bytes()).hexdigest(),
         "passed": all(g["passed"] for g in gates) and benchmark["passed"],
         "production_readiness": "not demonstrated: empirical diagnostic traces/calibration, real review outcomes and operational adapters incomplete",
     }

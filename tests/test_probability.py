@@ -32,6 +32,22 @@ class ProbabilityTests(unittest.TestCase):
         self.assertAlmostEqual(expected_information_gain(self.belief, action.outcomes), expected)
         self.assertAlmostEqual(expected, 0.2780719051126377)
 
+    def test_policy_prevalidated_kernel_matches_public_math(self):
+        model = default_model()
+        for vector in (
+            (0.25, 0.25, 0.25, 0.25),
+            (0.5, 0.5, 0.0, 0.0),
+            (0.99, 0.001, 0.008, 0.001),
+            (1.0, 0.0, 0.0, 0.0),
+        ):
+            belief = dict(zip(STATES, vector, strict=False))
+            ranking = rank_actions(belief, model.actions)
+            for ranked in ranking:
+                action = next(a for a in model.actions if a.action_id == ranked["action_id"])
+                self.assertAlmostEqual(
+                    ranked["eig"], expected_information_gain(belief, action.outcomes), places=12
+                )
+
     def test_likelihood_scale_invariance(self):
         a, _ = update_belief(self.belief, dict.fromkeys(STATES, 0.5))
         b, _ = update_belief(self.belief, dict.fromkeys(STATES, 0.25))

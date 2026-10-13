@@ -44,7 +44,9 @@ def scored_record(
         }
     )
     record["record_hash"] = fingerprint(record)
-    validate_scored_record(record)
+    # Hash was just computed from this immutable result conversion. Semantic
+    # validation still runs; loaded/untrusted records always verify the checksum.
+    validate_scored_record(record, check_hash=False)
     return record
 
 
@@ -52,7 +54,7 @@ def verify_record_hash(record: Mapping[str, Any]) -> bool:
     return record.get("record_hash") == fingerprint({k: v for k, v in record.items() if k != "record_hash"})
 
 
-def validate_scored_record(record: Mapping[str, Any]) -> None:
+def validate_scored_record(record: Mapping[str, Any], *, check_hash: bool = True) -> dict[str, float]:
     """A checksum proves identity, not semantic correctness or authenticity."""
     required = {
         "record_version",
@@ -72,7 +74,7 @@ def validate_scored_record(record: Mapping[str, Any]) -> None:
     }
     if not required.issubset(record) or record["record_version"] != RECORD_VERSION:
         raise ValidationError("unsupported or incomplete scored record schema")
-    if not verify_record_hash(record):
+    if check_hash and not verify_record_hash(record):
         raise ValidationError("diagnostic record checksum mismatch")
     truth = record["true_state"]
     decision = record["decision"]
@@ -116,6 +118,7 @@ def validate_scored_record(record: Mapping[str, Any]) -> None:
         raise ValidationError("diagnostic cost inconsistent with actions")
     if previous is not None and any(abs(previous[s] - belief[s]) > 1e-10 for s in STATES):
         raise ValidationError("terminal belief differs from final action")
+    return belief
 
 
 def calculate_metrics(records: Sequence[Mapping[str, Any]], *, bins: int = 10) -> dict[str, Any]:
@@ -134,21 +137,8 @@ def calculate_metrics(records: Sequence[Mapping[str, Any]], *, bins: int = 10) -
     brier, log_losses = [], []
     top_correct, top_confidence = [], []
     for r in records:
-        validate_scored_record(r)
-        if "record_hash" in r and not verify_record_hash(r):
-            raise ValidationError("diagnostic record checksum mismatch")
-        truth = r.get("true_state")
-        if truth not in STATES or r.get("decision") not in {"REPORT", "ESCALATE"}:
-            raise ValidationError("invalid scored terminal record")
-        if r["decision"] == "REPORT" and r.get("prediction") not in STATES:
-            raise ValidationError("invalid report prediction")
-        if r["decision"] == "ESCALATE" and r.get("prediction") is not None:
-            raise ValidationError("referral cannot have an automatic prediction")
-        b = validate_vector(r["final_belief"], STATES, normalized=True)
-        finite_number(r["diagnostic_cost"], "diagnostic cost", minimum=0)
-        finite_number(r["total_decision_cost"], "total decision cost", minimum=0)
-        if r.get("correct") != (r["decision"] == "REPORT" and r.get("prediction") == truth):
-            raise ValidationError("record correctness disagrees with terminal decision")
+        b = validate_scored_record(r)
+        truth = r["true_state"]
         confusion[truth][r["prediction"] if r["decision"] == "REPORT" else "ESCALATE"] += 1
         brier.append(math.fsum((b[s] - int(s == truth)) ** 2 for s in STATES))
         log_losses.append(-math.log(b[truth]) if b[truth] > 0 else math.inf)
@@ -197,6 +187,7 @@ def calculate_metrics(records: Sequence[Mapping[str, Any]], *, bins: int = 10) -
         "coverage": reports / n if n else None,
         "referral_rate": (n - reports) / n if n else None,
         "correct_auto_rate": correct / n if n else None,
+        "incorrect_auto_rate": (reports - correct) / n if n else None,
         "selective_accuracy": correct / reports if reports else None,
         "selective_risk": (reports - correct) / reports if reports else None,
         "balanced_accuracy": mean(supported_recalls),

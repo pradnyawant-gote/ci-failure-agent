@@ -1,5 +1,51 @@
 # CI Failure Diagnosis Agent
 
+## Current Python implementation
+
+The maintained implementation is in `ci_diagnosis/*.py`, with an entry point at
+`experiments/agent_simulation.py`. All executable logic and tests are Python.
+The original notebook and its historical saved outputs are retained unchanged.
+Unassisted notebook execution still encounters its original missing evaluation
+state; `execute_notebook_compatibility` validates its pinned content in an isolated
+subprocess and supplies the Python compatibility definitions.
+
+From a source checkout with Python 3.10–3.13:
+
+```bash
+python -m pip install -e ".[workbook,dev]"
+python -B -m ci_diagnosis.quality --doctor
+python -B -m ci_diagnosis.quality --output experiments/engineering_quality_results.py
+python -B -m ci_diagnosis.evaluation --output experiments/engineering_evaluation_results.py
+python -B experiments/engineering_report.py
+```
+
+`pyproject.toml` constrains the workbook dependencies and pins pytest, Ruff and
+mypy. The quality command runs the configured tests, lint, formatting and strict
+package type checks, plus a local instrumented benchmark. It reports failures;
+it does not certify live-CI readiness. Core inference uses the standard library.
+
+The runner validates immutable records, checks permission and resource limits
+before provider calls, preserves reported cost overruns, redacts error context,
+and explicitly reports or refers each complete episode. Artifact publication is
+atomic, and data-only readers validate bounded payloads without executing file
+code. Checksums detect corruption; they are not authenticity signatures.
+
+EIG/cost remains the default. `risk_per_cost` is an optional experimental
+comparison under the preprint's declared loss assumptions; positive risk
+reduction is not a proof of net benefit or optimal planning. Fixed Test,
+stage-MAP and prior-MAP comparisons require explicit `benchmark_mode=True`.
+They deliberately bypass reporting gates and must not be used as guarded
+operational diagnoses.
+
+New evaluations keep repository-disjoint source cases, paired keyed synthetic
+observations, repeated seeds, uncertainty summaries and explicit model/runtime
+manifests. The historical result file is preserved separately. Diagnostic
+likelihoods/costs and the 0.90 threshold remain assumptions, not empirical
+calibration. Multiple causes, human-review correctness, hard cancellation of
+arbitrary external providers and production deployment remain unvalidated.
+
+The following original project description records the earlier notebook baseline.
+
 ## Upload summary
 
 This upload adds the CI diagnosis agent, the supporting build/evaluation outputs, and the report summarizing the results.
